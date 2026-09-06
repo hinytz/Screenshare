@@ -1,0 +1,52 @@
+{
+  "name": "screenshare-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows Screenshare client with native window audio",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env SCREENSHARE_URL=http://localhost:3000 electron .",
+    "build:helper": "dotnet publish native/LoopbackCapture/LoopbackCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/dist",
+    "pack": "npm run build:helper && electron-builder --win"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.hinytz.screenshare",
+    "productName": "Screenshare",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "picker.html",
+      "picker-preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "native/dist/LoopbackCapture.exe",
+        "to": "LoopbackCapture.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  }
+}

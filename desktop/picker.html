@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Share</title>
+    <style>
+      :root {
+        --bg: #000;
+        --panel: #0a0a0a;
+        --line: #1c1c1c;
+        --text: #e8e4dc;
+        --muted: #7a7670;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        padding: 1rem 1.1rem;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.9rem;
+      }
+      h1 {
+        margin: 0;
+        font-size: 0.8rem;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        cursor: pointer;
+      }
+      #cancel {
+        padding: 0.45rem 0.7rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+      }
+      #grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+        gap: 0.7rem;
+        overflow: auto;
+      }
+      .item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        padding: 0.45rem;
+        text-align: left;
+      }
+      .item img {
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        object-fit: cover;
+        background: #050505;
+      }
+      .item span {
+        font-size: 0.72rem;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Share</h1>
+      <button id="cancel" type="button">Cancel</button>
+    </header>
+    <div id="grid"></div>
+    <script>
+      const grid = document.getElementById('grid');
+      document.getElementById('cancel').onclick = () => window.picker.cancel();
+      window.picker.list().then((sources) => {
+        for (const source of sources) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'item';
+          const img = document.createElement('img');
+          img.alt = '';
+          img.src = source.thumbnail;
+          const label = document.createElement('span');
+          label.textContent = source.kind === 'screen' ? `Screen · ${source.name}` : source.name;
+          button.append(img, label);
+          button.onclick = () => window.picker.choose(source);
+          grid.append(button);
+        }
+      });
+    </script>
+  </body>
+</html>

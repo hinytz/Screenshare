@@ -74,6 +74,16 @@ function isSecureRequest(req) {
 
 const sessions = new Set();
 const peers = new Set();
+const peerIdsByToken = new Map();
+
+function idForToken(token) {
+  let id = peerIdsByToken.get(token);
+  if (!id) {
+    id = crypto.randomBytes(8).toString('hex');
+    peerIdsByToken.set(token, id);
+  }
+  return id;
+}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -130,10 +140,18 @@ function broadcastToOthers(from, payload) {
   }
 }
 
+function findPeerByToken(token) {
+  return [...peers].find((peer) => peer.token === token) || null;
+}
+
+function findPeerById(id) {
+  return [...peers].find((peer) => peer.id === id) || null;
+}
+
 function dropPeer(client, announce) {
   if (!peers.delete(client)) return;
   if (announce && !client.replaced) {
-    broadcastToOthers(client, { type: 'peer-left' });
+    broadcastToOthers(client, { type: 'peer-left', id: client.id });
   }
 }
 
@@ -150,6 +168,7 @@ app.get('/api/stream', requireSession, (req, res) => {
   res.flushHeaders();
 
   const client = {
+    id: idForToken(req.sessionToken),
     token: req.sessionToken,
     res,
     replaced: false,
@@ -160,21 +179,14 @@ app.get('/api/stream', requireSession, (req, res) => {
       existing.replaced = true;
       peers.delete(existing);
       existing.res.end();
+      broadcastToOthers(existing, { type: 'peer-left', id: existing.id });
     }
   }
 
-  if (peers.size >= 2) {
-    send(client, { type: 'room-full' });
-    res.end();
-    return;
-  }
-
-  const polite = peers.size >= 1;
+  const others = [...peers].map((peer) => peer.id);
   peers.add(client);
-  send(client, { type: 'hello', polite, peerPresent: peers.size === 2 });
-  if (peers.size === 2) {
-    broadcastToOthers(client, { type: 'peer-joined' });
-  }
+  send(client, { type: 'hello', id: client.id, peers: others });
+  broadcastToOthers(client, { type: 'peer-joined', id: client.id });
 
   const heartbeat = setInterval(() => {
     if (res.writableEnded) return;
@@ -188,15 +200,19 @@ app.get('/api/stream', requireSession, (req, res) => {
 });
 
 app.post('/api/signal', requireSession, (req, res) => {
-  const from = [...peers].find((peer) => peer.token === req.sessionToken);
+  const from = findPeerByToken(req.sessionToken);
   if (!from) {
     return res.status(409).json({ error: 'Not in room' });
   }
   const body = req.body || {};
-  if (body.type !== 'signal' || !body.data) {
+  if (body.type !== 'signal' || !body.data || !body.to) {
     return res.status(400).json({ error: 'Bad signal' });
   }
-  broadcastToOthers(from, { type: 'signal', data: body.data });
+  const target = findPeerById(body.to);
+  if (!target) {
+    return res.status(404).json({ error: 'Peer gone' });
+  }
+  send(target, { type: 'signal', from: from.id, data: body.data });
   res.json({ ok: true });
 });
 
