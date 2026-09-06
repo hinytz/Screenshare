@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Screenshare</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="login" class="view">
+      <form id="login-form" class="login-card" autocomplete="current-password">
+        <p class="wordmark">Screenshare</p>
+        <label class="field">
+          <span>Password</span>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            required
+            autofocus
+            autocomplete="current-password"
+          />
+        </label>
+        <button type="submit" id="login-btn">Enter</button>
+        <p id="login-error" class="error" hidden>Wrong password</p>
+      </form>
+    </div>
+
+    <div id="room" class="view" hidden>
+      <main class="stage">
+        <section class="pane" id="pane-you" data-live="false" data-slot="pip">
+          <header class="pane-meta">
+            <span class="pane-name">You</span>
+            <span class="tally" aria-hidden="true"></span>
+            <span class="pane-state">Idle</span>
+          </header>
+          <video id="local-video" autoplay playsinline muted></video>
+          <p class="pane-empty">Not sharing</p>
+        </section>
+        <section class="pane" id="pane-them" data-live="false" data-slot="featured">
+          <header class="pane-meta">
+            <span class="pane-name">Them</span>
+            <span class="tally" aria-hidden="true"></span>
+            <span class="pane-state">Idle</span>
+          </header>
+          <video id="remote-video" autoplay playsinline></video>
+          <p class="pane-empty">Not sharing</p>
+          <button id="unmute" class="unmute" hidden type="button">Click to hear them</button>
+        </section>
+      </main>
+      <footer class="bar">
+        <p id="peer-status" class="status">Waiting</p>
+        <p id="room-error" class="error bar-error" hidden></p>
+        <button id="share-btn" type="button">Share screen</button>
+      </footer>
+    </div>
+
+    <div id="blocked" class="view" hidden>
+      <div class="login-card">
+        <p class="wordmark">Screenshare</p>
+        <p class="blocked-copy">Room is full. Only two people can be in at once.</p>
+      </div>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
