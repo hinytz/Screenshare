@@ -231,6 +231,56 @@ button:disabled {
   display: none;
 }
 
+.cam-feature {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.cam-feature[hidden] {
+  display: none;
+}
+
+.cam-stack {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  z-index: 6;
+  width: 8rem;
+  height: 6rem;
+  pointer-events: none;
+}
+
+.cam-stack:empty {
+  display: none;
+}
+
+.cam-tile {
+  position: absolute;
+  width: 8rem;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.cam-tile video,
+.pane .cam-tile video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--bg);
+}
+
 .pane-meta {
   position: absolute;
   top: 0;
@@ -363,17 +413,42 @@ button:disabled {
 }
 
 #change-btn,
-#share-btn {
+#share-btn,
+#float-btn {
   padding: 0.5rem 0.85rem;
 }
 
-#change-btn[hidden] {
+#change-btn[hidden],
+#float-btn[hidden] {
   display: none;
 }
 
-#share-btn[data-sharing="true"] {
+#share-btn[data-sharing="true"],
+#float-btn[data-open="true"] {
   border-color: var(--tally);
   color: var(--tally);
+}
+
+#camera-btn {
+  width: 2.35rem;
+  min-width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+#camera-btn svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+  fill: currentColor;
+}
+
+#camera-btn[data-live="true"] {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
 }
 
 .picker {
@@ -412,6 +487,23 @@ button:disabled {
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-bottom: 0.9rem;
+}
+
+.quality-row[hidden] {
+  display: none;
+}
+
+.camera-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 0.9rem;
+  object-fit: cover;
+  background: var(--bg);
+}
+
+.camera-preview[hidden] {
+  display: none;
 }
 
 .quality-btn {
@@ -480,6 +572,11 @@ button:disabled {
 
   .pane[data-slot="pip"] {
     width: min(11.5rem, 46vw);
+  }
+
+  .cam-stack {
+    right: 0.65rem;
+    bottom: 0.65rem;
   }
 }
 

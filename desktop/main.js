@@ -212,7 +212,48 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     stopLoopback();
+    const leftover = [...BrowserWindow.getAllWindows()];
     mainWindow = null;
+    for (const win of leftover) {
+      if (!win.isDestroyed()) win.close();
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { action: 'deny' };
+    }
+    let origin = '';
+    try {
+      origin = new URL(startUrl()).origin;
+    } catch {
+      origin = '';
+    }
+    if (origin && parsed.origin === origin && parsed.pathname === '/float.html') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          frame: false,
+          alwaysOnTop: true,
+          backgroundColor: '#000000',
+          resizable: true,
+          width: 800,
+          height: 280,
+          minWidth: 320,
+          minHeight: 140,
+          autoHideMenuBar: true,
+          icon: appIcon(),
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+          },
+        },
+      };
+    }
+    return { action: 'deny' };
   });
 
   return mainWindow.loadURL(startUrl());
