@@ -9,6 +9,7 @@ const pipRail = document.getElementById('pip-rail');
 const localVideo = document.getElementById('local-video');
 const paneYou = document.getElementById('pane-you');
 const shareBtn = document.getElementById('share-btn');
+const changeBtn = document.getElementById('change-btn');
 const peerStatus = document.getElementById('peer-status');
 const roomError = document.getElementById('room-error');
 const picker = document.getElementById('picker');
@@ -25,6 +26,7 @@ const QUALITY_PRESETS = {
 };
 
 let shareQuality = '1080p30';
+let replacingShare = false;
 
 const DEFAULT_ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -113,6 +115,7 @@ function showRoomError(message) {
 function setLocalSharing(sharing) {
   shareBtn.dataset.sharing = sharing ? 'true' : 'false';
   shareBtn.textContent = sharing ? 'Stop sharing' : 'Share screen';
+  changeBtn.hidden = !sharing;
   if (sharing && ![...peers.values()].some((peer) => isLive(peer.pane))) {
     featured = 'you';
   }
@@ -254,6 +257,15 @@ function attachDisplayAudio(track) {
   if ('contentHint' in track) track.contentHint = 'music';
 }
 
+function publishLocalTrack(pc, track, stream) {
+  const transceiver = pc.getTransceivers().find((item) => {
+    return item.sender.track?.kind === track.kind || item.receiver.track?.kind === track.kind;
+  });
+  if (transceiver) return transceiver.sender.replaceTrack(track);
+  pc.addTrack(track, stream);
+  return Promise.resolve();
+}
+
 async function attachLocalStream(stream) {
   localStream = stream;
   localVideo.srcObject = stream;
@@ -261,21 +273,25 @@ async function attachLocalStream(stream) {
   for (const track of stream.getAudioTracks()) attachDisplayAudio(track);
   for (const track of stream.getVideoTracks()) applyCaptureHint(track);
   const videoPcs = [];
+  const publishJobs = [];
   for (const track of stream.getTracks()) {
     track.addEventListener('ended', () => {
       if (localStream === stream) {
         if (track.kind === 'audio') {
-          showRoomError('Share audio stopped. Start again and enable audio in the picker.');
+          if (!replacingShare) {
+            showRoomError('Share audio stopped. Start again and enable audio in the picker.');
+          }
           return;
         }
         stopShare();
       }
     });
     for (const peer of peers.values()) {
-      peer.pc.addTrack(track, stream);
+      publishJobs.push(publishLocalTrack(peer.pc, track, stream));
       if (track.kind === 'video') videoPcs.push(peer.pc);
     }
   }
+  await Promise.all(publishJobs);
   await Promise.all([...new Set(videoPcs)].map((pc) => applyVideoQuality(pc)));
   if (!stream.getAudioTracks().length) {
     showRoomError(
@@ -464,17 +480,59 @@ function stopDesktopAudio() {
   desktopAudio = { ctx: null, node: null, mute: null, unsub: null, energyTimer: null };
 }
 
-async function startDesktopShare() {
+async function captureDesktopShare() {
   const source = await pickDesktopSource();
-  if (!source) return;
-  if (localStream) stopShare();
+  if (!source) return null;
   const videoStream = await captureDesktopVideo(source.id);
+  stopDesktopAudio();
   const audioTrack = await startDesktopAudio(
     source.kind === 'screen' ? { system: true } : { hwnd: source.hwnd }
   );
   const tracks = [...videoStream.getVideoTracks()];
   if (audioTrack) tracks.push(audioTrack);
-  await attachLocalStream(new MediaStream(tracks));
+  return new MediaStream(tracks);
+}
+
+async function startDesktopShare() {
+  const stream = await captureDesktopShare();
+  if (!stream) return;
+  await attachLocalStream(stream);
+}
+
+async function switchLocalShare(stream) {
+  const previous = localStream;
+  await attachLocalStream(stream);
+  if (previous && previous !== stream) {
+    for (const track of previous.getTracks()) track.stop();
+  }
+}
+
+async function changeScreen() {
+  if (!localStream) return;
+  showRoomError('');
+  changeBtn.disabled = true;
+  replacingShare = true;
+  try {
+    if (desktop) {
+      const stream = await captureDesktopShare();
+      if (!stream) return;
+      await switchLocalShare(stream);
+      return;
+    }
+    const chosen = await pickShareQuality();
+    if (!chosen) return;
+    const stream = await captureDisplay();
+    await switchLocalShare(stream);
+  } catch (err) {
+    if (err && err.name === 'NotAllowedError') {
+      showRoomError('Screen share was blocked.');
+      return;
+    }
+    showRoomError('Could not change screen.');
+  } finally {
+    replacingShare = false;
+    changeBtn.disabled = false;
+  }
 }
 
 async function startShare() {
@@ -487,7 +545,6 @@ async function startShare() {
     const chosen = await pickShareQuality();
     if (!chosen) return;
     const stream = await captureDisplay();
-    if (localStream) stopShare();
     await attachLocalStream(stream);
   } catch (err) {
     stopDesktopAudio();
@@ -510,26 +567,35 @@ function stopShare() {
   setLocalSharing(false);
   for (const peer of peers.values()) {
     for (const sender of peer.pc.getSenders()) {
-      if (sender.track) peer.pc.removeTrack(sender);
+      if (sender.track) sender.replaceTrack(null).catch(() => {});
     }
   }
 }
 
 function remoteHasAudio(peer) {
-  return Boolean(
-    peer.stream && peer.stream.getAudioTracks().some((track) => track.readyState === 'live')
-  );
+  return liveRemoteTracks(peer).some((track) => track.kind === 'audio');
+}
+
+function liveRemoteTracks(peer) {
+  return peer.stream ? peer.stream.getTracks().filter((track) => track.readyState === 'live') : [];
+}
+
+function replaceRemoteTrack(peer, track) {
+  if (!peer.stream) peer.stream = new MediaStream();
+  for (const existing of peer.stream.getTracks()) {
+    if (existing.kind === track.kind || existing.readyState === 'ended') {
+      peer.stream.removeTrack(existing);
+    }
+  }
+  peer.stream.addTrack(track);
 }
 
 function bindRemoteVideo(peer) {
-  if (!peer.stream) {
-    peer.video.srcObject = null;
-    return;
-  }
+  const live = liveRemoteTracks(peer);
   peer.video.autoplay = true;
   peer.video.playsInline = true;
   peer.video.volume = 1;
-  peer.video.srcObject = new MediaStream(peer.stream.getTracks());
+  peer.video.srcObject = live.length ? new MediaStream(live) : null;
 }
 
 async function playRemote(peer) {
@@ -576,14 +642,15 @@ async function unlockMedia() {
 
 function watchRemoteTrack(peer, track) {
   const refresh = () => {
-    const live = Boolean(
-      peer.stream && peer.stream.getTracks().some((item) => item.readyState === 'live')
-    );
-    setPaneLive(peer.pane, live, live ? 'Live' : 'Idle');
-    if (!live) {
+    if (peer.stream && track.readyState === 'ended') peer.stream.removeTrack(track);
+    const live = liveRemoteTracks(peer);
+    setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
+    if (!live.length) {
       peer.video.srcObject = null;
       peer.unmute.hidden = true;
+      return;
     }
+    bindRemoteVideo(peer);
   };
   track.addEventListener('ended', refresh);
   track.addEventListener('unmute', () => {
@@ -644,12 +711,21 @@ function ensurePeer(id, polite) {
     sendSignal(id, { type: 'ice', candidate });
   };
 
-  pc.ontrack = ({ track }) => {
+  pc.ontrack = ({ track, streams }) => {
     track.enabled = true;
     if (track.kind === 'audio') attachDisplayAudio(track);
-    if (!state.stream) state.stream = new MediaStream();
-    if (!state.stream.getTracks().includes(track)) state.stream.addTrack(track);
-    if (state.stream.getTracks().some((item) => item.readyState === 'live') && featured === 'you' && !isLive(paneYou)) {
+    if (streams && streams[0]) {
+      state.stream = streams[0];
+      for (const existing of state.stream.getTracks()) {
+        if (existing !== track && (existing.kind === track.kind || existing.readyState === 'ended')) {
+          state.stream.removeTrack(existing);
+        }
+      }
+      if (!state.stream.getTracks().includes(track)) state.stream.addTrack(track);
+    } else {
+      replaceRemoteTrack(state, track);
+    }
+    if (liveRemoteTracks(state).length && featured === 'you' && !isLive(paneYou)) {
       featured = id;
     }
     setPaneLive(pane, true, 'Live');
@@ -674,7 +750,7 @@ function ensurePeer(id, polite) {
   if (localStream) {
     let hasVideo = false;
     for (const track of localStream.getTracks()) {
-      pc.addTrack(track, localStream);
+      publishLocalTrack(pc, track, localStream);
       if (track.kind === 'video') hasVideo = true;
     }
     preferVideoCodecs(pc);
@@ -859,6 +935,10 @@ paneYou.addEventListener('click', (event) => onPaneClick(event, paneYou));
 shareBtn.addEventListener('click', () => {
   if (localStream) stopShare();
   else startShare();
+});
+
+changeBtn.addEventListener('click', () => {
+  changeScreen();
 });
 
 async function boot() {
