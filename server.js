@@ -2,11 +2,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
-const { WebSocketServer } = require('ws');
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env');
@@ -66,19 +64,8 @@ function passwordMatches(input) {
   return Boolean(APP_PASSWORD) && crypto.timingSafeEqual(a, b);
 }
 
-const parseCookies = cookieParser(SESSION_SECRET);
-const tickets = new Map();
-const TICKET_MS = 60_000;
-
 function readSession(req) {
   return (req.signedCookies && req.signedCookies.session) || null;
-}
-
-function takeTicket(ticket) {
-  if (!ticket) return false;
-  const exp = tickets.get(ticket);
-  tickets.delete(ticket);
-  return Boolean(exp && exp > Date.now());
 }
 
 function isSecureRequest(req) {
@@ -90,7 +77,7 @@ const peers = new Set();
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '16kb' }));
+app.use(express.json({ limit: '32kb' }));
 app.use(cookieParser(SESSION_SECRET));
 
 app.get('/health', (_req, res) => {
@@ -102,6 +89,7 @@ function requireSession(req, res, next) {
   if (!token || !sessions.has(token)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  req.sessionToken = token;
   next();
 }
 
@@ -131,21 +119,9 @@ app.post('/api/login', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/ws-ticket', requireSession, (_req, res) => {
-  const ticket = crypto.randomBytes(24).toString('hex');
-  tickets.set(ticket, Date.now() + TICKET_MS);
-  res.json({ ticket });
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-
-const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-
-function send(ws, payload) {
-  if (ws.readyState === 1) {
-    ws.send(JSON.stringify(payload));
-  }
+function send(client, payload) {
+  if (client.res.writableEnded) return;
+  client.res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 function broadcastToOthers(from, payload) {
@@ -154,68 +130,78 @@ function broadcastToOthers(from, payload) {
   }
 }
 
-function rejectUpgrade(socket, status, message) {
-  socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
-  socket.destroy();
+function dropPeer(client, announce) {
+  if (!peers.delete(client)) return;
+  if (announce && !client.replaced) {
+    broadcastToOthers(client, { type: 'peer-left' });
+  }
 }
 
-server.on('upgrade', (req, socket, head) => {
-  parseCookies(req, {}, () => {
-    let parsed;
-    try {
-      parsed = new URL(req.url, 'http://localhost');
-    } catch {
-      rejectUpgrade(socket, 400, 'Bad Request');
-      return;
-    }
-    if (parsed.pathname !== '/ws' && parsed.pathname !== '/api/ws') {
-      rejectUpgrade(socket, 404, 'Not Found');
-      return;
-    }
-    const ticketOk = takeTicket(parsed.searchParams.get('ticket'));
-    const token = readSession(req);
-    if (!ticketOk && (!token || !sessions.has(token))) {
-      rejectUpgrade(socket, 401, 'Unauthorized');
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
-    });
+app.get('/api/stream', requireSession, (req, res) => {
+  req.setTimeout(0);
+  res.setTimeout(0);
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
-});
+  res.flushHeaders();
 
-wss.on('connection', (ws) => {
+  const client = {
+    token: req.sessionToken,
+    res,
+    replaced: false,
+  };
+
+  for (const existing of [...peers]) {
+    if (existing.token === client.token) {
+      existing.replaced = true;
+      peers.delete(existing);
+      existing.res.end();
+    }
+  }
+
   if (peers.size >= 2) {
-    send(ws, { type: 'room-full' });
-    ws.close();
+    send(client, { type: 'room-full' });
+    res.end();
     return;
   }
 
   const polite = peers.size >= 1;
-  peers.add(ws);
-  send(ws, { type: 'hello', polite, peerPresent: peers.size === 2 });
+  peers.add(client);
+  send(client, { type: 'hello', polite, peerPresent: peers.size === 2 });
   if (peers.size === 2) {
-    broadcastToOthers(ws, { type: 'peer-joined' });
+    broadcastToOthers(client, { type: 'peer-joined' });
   }
 
-  ws.on('message', (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(String(raw));
-    } catch {
-      return;
-    }
-    if (!msg || msg.type !== 'signal' || !msg.data) return;
-    broadcastToOthers(ws, { type: 'signal', data: msg.data });
-  });
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return;
+    res.write(': ping\n\n');
+  }, 15000);
 
-  ws.on('close', () => {
-    if (peers.delete(ws)) {
-      broadcastToOthers(ws, { type: 'peer-left' });
-    }
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    dropPeer(client, true);
   });
 });
 
-server.listen(PORT, () => {
+app.post('/api/signal', requireSession, (req, res) => {
+  const from = [...peers].find((peer) => peer.token === req.sessionToken);
+  if (!from) {
+    return res.status(409).json({ error: 'Not in room' });
+  }
+  const body = req.body || {};
+  if (body.type !== 'signal' || !body.data) {
+    return res.status(400).json({ error: 'Bad signal' });
+  }
+  broadcastToOthers(from, { type: 'signal', data: body.data });
+  res.json({ ok: true });
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.listen(PORT, () => {
   console.log(`Screenshare listening on ${PORT}`);
 });

@@ -33,11 +33,9 @@ Open http://localhost:3000 in two browser profiles (or two browsers). Screen cap
 | `PORT` | No | Defaults to `3000` |
 | `ICE_SERVERS` | No | JSON array of ICE servers if you later add TURN |
 
-Same-origin WebSocket (`/ws`) needs no extra Traefik setting when this is a single service. `GET /health` returns `ok`.
+Signaling uses ordinary HTTP (`/api/stream` and `/api/signal`), so Cloudflare and Traefik do not need WebSocket support. `GET /health` returns `ok`.
 
 Leave **Publish Directory** empty. This is a Node app, not a static site.
-
-If the domain is proxied through **Cloudflare**, turn on **Network → WebSockets**. Bot Fight Mode or a WAF rule on `/ws` will also block the room. SSL/TLS should be **Full (strict)**.
 
 ## Notes
 

@@ -22,7 +22,7 @@ const DEFAULT_ICE = [
 ];
 
 let iceServers = DEFAULT_ICE;
-let socket = null;
+let events = null;
 let pc = null;
 let polite = false;
 let makingOffer = false;
@@ -128,9 +128,14 @@ function setRemoteSharing(sharing) {
 }
 
 function send(payload) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(payload));
-  }
+  fetch('/api/signal', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {
+    showRoomError('Could not send signaling data.');
+  });
 }
 
 function attachLocalStream(stream) {
@@ -294,84 +299,77 @@ async function handleSignal(data) {
   }
 }
 
-async function connectSocket() {
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  let ticket = '';
-  try {
-    const res = await fetch('/api/ws-ticket', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      ticket = data.ticket || '';
-    }
-  } catch {
-    // Cookie on the upgrade may still work.
+async function handleRoomMessage(msg) {
+  if (msg.type === 'room-full') {
+    showView('blocked');
+    if (events) events.close();
+    return;
   }
-  const query = ticket ? `?ticket=${encodeURIComponent(ticket)}` : '';
-  socket = new WebSocket(`${protocol}://${location.host}/ws${query}`);
+
+  if (msg.type === 'hello') {
+    polite = Boolean(msg.polite);
+    if (msg.peerPresent) {
+      setPeerStatus(true);
+      await createPeerConnection();
+    } else {
+      setPeerStatus(false);
+    }
+    return;
+  }
+
+  if (msg.type === 'peer-joined') {
+    setPeerStatus(true);
+    showRoomError('');
+    await createPeerConnection();
+    return;
+  }
+
+  if (msg.type === 'peer-left') {
+    setPeerStatus(false);
+    await closePeerConnection();
+    return;
+  }
+
+  if (msg.type === 'signal') {
+    try {
+      await handleSignal(msg.data);
+    } catch (err) {
+      console.error(err);
+      showRoomError('Signaling failed. Refresh and try again.');
+    }
+  }
+}
+
+function connectSocket() {
+  if (events) events.close();
+  events = new EventSource('/api/stream');
   let opened = false;
 
-  socket.addEventListener('open', () => {
+  events.addEventListener('open', () => {
     opened = true;
     showRoomError('');
   });
 
-  socket.addEventListener('message', async (event) => {
+  events.addEventListener('message', async (event) => {
     let msg;
     try {
       msg = JSON.parse(event.data);
     } catch {
       return;
     }
-
-    if (msg.type === 'room-full') {
-      showView('blocked');
-      socket.close();
-      return;
-    }
-
-    if (msg.type === 'hello') {
-      polite = Boolean(msg.polite);
-      if (msg.peerPresent) {
-        setPeerStatus(true);
-        await createPeerConnection();
-      } else {
-        setPeerStatus(false);
-      }
-      return;
-    }
-
-    if (msg.type === 'peer-joined') {
-      setPeerStatus(true);
-      showRoomError('');
-      await createPeerConnection();
-      return;
-    }
-
-    if (msg.type === 'peer-left') {
-      setPeerStatus(false);
-      await closePeerConnection();
-      return;
-    }
-
-    if (msg.type === 'signal') {
-      try {
-        await handleSignal(msg.data);
-      } catch (err) {
-        console.error(err);
-        showRoomError('Signaling failed. Refresh and try again.');
-      }
-    }
+    await handleRoomMessage(msg);
   });
 
-  socket.addEventListener('close', () => {
+  events.addEventListener('error', () => {
     if (!blockedView.hidden) return;
-    setPeerStatus(false);
-    closePeerConnection();
-    showRoomError(
-      opened
-        ? 'Disconnected from the room.'
-        : 'Live connection failed. In Cloudflare, enable Network → WebSockets, then refresh.'
-    );
+    if (events && events.readyState === EventSource.CONNECTING && opened) {
+      return;
+    }
+    if (events && events.readyState === EventSource.CLOSED) {
+      setPeerStatus(false);
+      closePeerConnection();
+      showRoomError('Disconnected from the room.');
+    }
   });
 }
 
