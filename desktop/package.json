@@ -1,6 +1,6 @@
 {
   "name": "screenshare-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "description": "Windows Screenshare client with native window audio",
   "main": "main.js",
@@ -8,12 +8,19 @@
     "start": "electron .",
     "dev": "cross-env SCREENSHARE_URL=http://localhost:3000 electron .",
     "build:helper": "dotnet publish native/LoopbackCapture/LoopbackCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/dist",
-    "pack": "npm run build:helper && electron-builder --win"
+    "rebuild:native": "electron-rebuild -f -w electron-native-screenshare",
+    "bump": "node scripts/bump-version.js",
+    "pack": "node scripts/bump-version.js patch && npm run rebuild:native && npm run build:helper && electron-builder --win",
+    "pack:same": "npm run rebuild:native && npm run build:helper && electron-builder --win"
   },
   "engines": {
     "node": ">=20"
   },
+  "dependencies": {
+    "electron-native-screenshare": "^1.2.0"
+  },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "cross-env": "^7.0.3",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.12"
@@ -21,6 +28,10 @@
   "build": {
     "appId": "com.hinytz.screenshare",
     "productName": "Screenshare",
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": true,
     "directories": {
       "output": "dist"
     },
@@ -28,7 +39,8 @@
       "main.js",
       "preload.js",
       "picker.html",
-      "picker-preload.js"
+      "picker-preload.js",
+      "build/icon.ico"
     ],
     "extraResources": [
       {
@@ -37,16 +49,24 @@
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "nsis": {
       "oneClick": true,
-      "perMachine": false
+      "perMachine": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
+  },
+  "allowScripts": {
+    "electron-native-screenshare@1.2.0": true
   }
 }

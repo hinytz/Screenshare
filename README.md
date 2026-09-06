@@ -49,7 +49,7 @@ npm run build:helper
 npm run dev
 ```
 
-`npm run build:helper` needs the .NET 8 SDK. `npm run pack` builds the helper and an NSIS installer in `desktop/dist`.
+`npm run rebuild:native` needs Visual Studio Build Tools (C++ workload). `npm run build:helper` needs the .NET 8 SDK and is only a fallback. `npm run pack` bumps the desktop app version, rebuilds native audio, and builds an NSIS installer in `desktop/dist`. Use `npm run pack:same` to rebuild without changing the version, or `npm run bump -- minor` / `npm run bump -- 1.2.0` to set it yourself.
 
 Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. The packaged app loads `https://screenshare.hinytz.com`. Override with `SCREENSHARE_URL`. Deploy the updated `public/` folder so the site matches the desktop capture path.
 

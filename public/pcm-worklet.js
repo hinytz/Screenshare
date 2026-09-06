@@ -3,16 +3,20 @@ class PcmSource extends AudioWorkletProcessor {
     super();
     this.queue = [];
     this.offset = 0;
+    this.pending = new Uint8Array(0);
     this.port.onmessage = (event) => {
       const raw = event.data;
-      const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw);
-      if (bytes.byteLength < 4) return;
-      const floats = new Float32Array(
-        bytes.buffer,
-        bytes.byteOffset,
-        Math.floor(bytes.byteLength / 4)
-      );
-      this.queue.push(floats);
+      const incoming = raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw);
+      if (!incoming.byteLength) return;
+      const merged = new Uint8Array(this.pending.length + incoming.length);
+      merged.set(this.pending, 0);
+      merged.set(incoming, this.pending.length);
+      const usable = merged.byteLength - (merged.byteLength % 8);
+      if (usable >= 8) {
+        const copy = merged.slice(0, usable);
+        this.queue.push(new Float32Array(copy.buffer, copy.byteOffset, copy.byteLength / 4));
+      }
+      this.pending = merged.slice(usable);
     };
   }
 

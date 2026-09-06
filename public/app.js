@@ -19,9 +19,9 @@ const pickerContinue = document.getElementById('picker-continue');
 const desktop = window.screenshareDesktop;
 
 const QUALITY_PRESETS = {
-  '720p30': { id: '720p30', label: '720p 30', width: 1280, height: 720, fps: 30, maxBitrate: 5_000_000 },
-  '1080p30': { id: '1080p30', label: '1080p 30', width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
-  '720p60': { id: '720p60', label: '720p 60', width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
+  '720p30': { id: '720p30', label: '720p 30', width: 1280, height: 720, fps: 30, maxBitrate: 6_000_000 },
+  '1080p30': { id: '1080p30', label: '1080p 30', width: 1920, height: 1080, fps: 30, maxBitrate: 6_000_000 },
+  '720p60': { id: '720p60', label: '720p 60', width: 1280, height: 720, fps: 60, maxBitrate: 6_000_000 },
 };
 
 let shareQuality = '1080p30';
@@ -41,7 +41,9 @@ const peers = new Map();
 let desktopAudio = {
   ctx: null,
   node: null,
+  mute: null,
   unsub: null,
+  energyTimer: null,
 };
 
 function showView(view) {
@@ -186,7 +188,30 @@ function applyCaptureHint(track) {
   if (track.kind === 'video' && 'contentHint' in track) track.contentHint = 'detail';
 }
 
+const VIDEO_CODEC_PREF = ['video/av1', 'video/vp9', 'video/h264'];
+
+function preferVideoCodecs(pc) {
+  if (!pc || typeof RTCRtpSender.getCapabilities !== 'function') return;
+  const caps = RTCRtpSender.getCapabilities('video');
+  if (!caps || !caps.codecs.length) return;
+  const rank = (mime) => {
+    const index = VIDEO_CODEC_PREF.indexOf(String(mime).toLowerCase());
+    return index === -1 ? VIDEO_CODEC_PREF.length : index;
+  };
+  const ordered = [...caps.codecs].sort((a, b) => rank(a.mimeType) - rank(b.mimeType));
+  for (const transceiver of pc.getTransceivers()) {
+    const kind = transceiver.receiver.track.kind || transceiver.sender.track?.kind;
+    if (kind !== 'video') continue;
+    try {
+      transceiver.setCodecPreferences(ordered);
+    } catch (err) {
+      console.warn('Could not set video codec preferences', err);
+    }
+  }
+}
+
 async function applyVideoQuality(pc) {
+  preferVideoCodecs(pc);
   const preset = currentQuality();
   for (const sender of pc.getSenders()) {
     if (!sender.track || sender.track.kind !== 'video') continue;
@@ -370,6 +395,30 @@ async function captureDesktopVideo(sourceId) {
   }
 }
 
+function stopDesktopEnergyWatch() {
+  if (desktopAudio.energyTimer) {
+    clearTimeout(desktopAudio.energyTimer);
+    desktopAudio.energyTimer = null;
+  }
+}
+
+function startDesktopEnergyWatch() {
+  stopDesktopEnergyWatch();
+  let samples = 0;
+  let sumSq = 0;
+  desktopAudio.energyTimer = setTimeout(() => {
+    desktopAudio.energyTimer = null;
+    const rms = samples ? Math.sqrt(sumSq / samples) : 0;
+    if (rms < 0.0005) {
+      showRoomError('No audio captured. Play sound in the selected window, or share the whole screen.');
+    }
+  }, 1000);
+  return (floats) => {
+    for (let i = 0; i < floats.length; i++) sumSq += floats[i] * floats[i];
+    samples += floats.length;
+  };
+}
+
 async function startDesktopAudio(target) {
   const started = await desktop.startLoopback(target);
   if (!started || !started.ok) {
@@ -384,22 +433,35 @@ async function startDesktopAudio(target) {
     outputChannelCount: [2],
   });
   const dest = ctx.createMediaStreamDestination();
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
   node.connect(dest);
+  node.connect(mute);
+  mute.connect(ctx.destination);
+  const noteEnergy = startDesktopEnergyWatch();
   const unsub = desktop.onPcm((buffer) => {
+    const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
+    if (bytes.byteLength >= 4) {
+      const aligned = bytes.byteLength - (bytes.byteLength % 4);
+      const copy = bytes.slice(0, aligned);
+      noteEnergy(new Float32Array(copy.buffer, copy.byteOffset, copy.byteLength / 4));
+    }
     node.port.postMessage(buffer, buffer instanceof ArrayBuffer ? [buffer] : []);
   });
-  desktopAudio = { ctx, node, unsub };
+  desktopAudio = { ctx, node, mute, unsub, energyTimer: desktopAudio.energyTimer };
   const track = dest.stream.getAudioTracks()[0];
   if (track) attachDisplayAudio(track);
   return track;
 }
 
 function stopDesktopAudio() {
+  stopDesktopEnergyWatch();
   if (desktopAudio.unsub) desktopAudio.unsub();
   if (desktop) desktop.stopLoopback();
   if (desktopAudio.node) desktopAudio.node.disconnect();
+  if (desktopAudio.mute) desktopAudio.mute.disconnect();
   if (desktopAudio.ctx) desktopAudio.ctx.close();
-  desktopAudio = { ctx: null, node: null, unsub: null };
+  desktopAudio = { ctx: null, node: null, mute: null, unsub: null, energyTimer: null };
 }
 
 async function startDesktopShare() {
@@ -598,6 +660,7 @@ function ensurePeer(id, polite) {
   pc.onnegotiationneeded = async () => {
     try {
       state.makingOffer = true;
+      preferVideoCodecs(pc);
       await pc.setLocalDescription();
       sendSignal(id, { type: 'sdp', description: pc.localDescription });
     } catch (err) {
@@ -614,6 +677,7 @@ function ensurePeer(id, polite) {
       pc.addTrack(track, localStream);
       if (track.kind === 'video') hasVideo = true;
     }
+    preferVideoCodecs(pc);
     if (hasVideo) applyVideoQuality(pc);
   }
 
@@ -672,6 +736,7 @@ async function handleSignal(from, data) {
   peer.isSettingRemoteAnswerPending = description.type === 'answer';
   await pc.setRemoteDescription(description);
   peer.isSettingRemoteAnswerPending = false;
+  preferVideoCodecs(pc);
 
   if (description.type === 'offer') {
     await pc.setLocalDescription();

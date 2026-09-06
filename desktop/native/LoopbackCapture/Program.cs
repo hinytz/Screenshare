@@ -30,6 +30,7 @@ internal static class Program
     {
         public bool System { get; private set; }
         public uint Pid { get; private set; }
+        public string Source { get; private set; } = "pid";
 
         public static Options Parse(string[] args)
         {
@@ -43,12 +44,14 @@ internal static class Program
                         break;
                     case "--pid" when i + 1 < args.Length:
                         options.Pid = uint.Parse(args[++i]);
+                        options.Source = "pid";
                         break;
                     case "--hwnd" when i + 1 < args.Length:
                         var hwnd = nint.Parse(args[++i]);
                         Native.GetWindowThreadProcessId(hwnd, out var pid);
                         if (pid == 0) throw new InvalidOperationException("Could not resolve HWND to PID.");
                         options.Pid = pid;
+                        options.Source = "hwnd";
                         break;
                 }
             }
@@ -58,9 +61,74 @@ internal static class Program
                 throw new InvalidOperationException("Pass --pid, --hwnd, or --system.");
             }
 
+            if (!options.System)
+            {
+                var sourcePid = options.Pid;
+                options.Pid = ProcessTree.ResolveSameImageRoot(sourcePid, out var image);
+                Console.Error.WriteLine($"{options.Source} pid {sourcePid} -> root {options.Pid} {image}");
+            }
+
             return options;
         }
     }
+}
+
+internal static class ProcessTree
+{
+    public static uint ResolveSameImageRoot(uint pid, out string image)
+    {
+        var processes = Snapshot();
+        if (!processes.TryGetValue(pid, out var start))
+        {
+            image = "?";
+            return pid;
+        }
+
+        image = FileName(start.Exe);
+        var current = pid;
+        var seen = new HashSet<uint> { current };
+        while (processes.TryGetValue(current, out var entry))
+        {
+            var parent = entry.Parent;
+            if (parent == 0 || !seen.Add(parent)) break;
+            if (!processes.TryGetValue(parent, out var parentEntry)) break;
+            var parentImage = FileName(parentEntry.Exe);
+            if (!string.Equals(image, parentImage, StringComparison.OrdinalIgnoreCase)) break;
+            current = parent;
+            image = parentImage;
+        }
+
+        return current;
+    }
+
+    private static string FileName(string path) =>
+        string.IsNullOrWhiteSpace(path) ? "?" : Path.GetFileName(path);
+
+    private static Dictionary<uint, ProcessInfo> Snapshot()
+    {
+        var map = new Dictionary<uint, ProcessInfo>();
+        var snap = Native.CreateToolhelp32Snapshot(Native.Th32csSnapProcess, 0);
+        if (snap == nint.Zero || snap == Native.InvalidHandleValue) return map;
+
+        try
+        {
+            var entry = new ProcessEntry32 { dwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
+            if (!Native.Process32First(snap, ref entry)) return map;
+            do
+            {
+                map[entry.th32ProcessID] = new ProcessInfo(entry.th32ParentProcessID, entry.szExeFile ?? "");
+            }
+            while (Native.Process32Next(snap, ref entry));
+        }
+        finally
+        {
+            Native.CloseHandle(snap);
+        }
+
+        return map;
+    }
+
+    private readonly record struct ProcessInfo(uint Parent, string Exe);
 }
 
 internal interface IPcmSource : IDisposable
@@ -368,8 +436,23 @@ internal static class Native
 {
     public const string ProcessLoopbackDevice = @"VAD\Process_Loopback";
 
+    public const uint Th32csSnapProcess = 2;
+    public static readonly nint InvalidHandleValue = new(-1);
+
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern nint CreateToolhelp32Snapshot(uint flags, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32FirstW")]
+    public static extern bool Process32First(nint snapshot, ref ProcessEntry32 entry);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32NextW")]
+    public static extern bool Process32Next(nint snapshot, ref ProcessEntry32 entry);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(nint handle);
 
     [DllImport("Mmdevapi.dll", CharSet = CharSet.Unicode)]
     public static extern int ActivateAudioInterfaceAsync(
@@ -378,6 +461,22 @@ internal static class Native
         ref PropVariant activationParams,
         IActivateAudioInterfaceCompletionHandler completionHandler,
         out IActivateAudioInterfaceAsyncOperation activationOperation);
+}
+
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+internal struct ProcessEntry32
+{
+    public uint dwSize;
+    public uint cntUsage;
+    public uint th32ProcessID;
+    public nint th32DefaultHeapID;
+    public uint th32ModuleID;
+    public uint cntThreads;
+    public uint th32ParentProcessID;
+    public int pcPriClassBase;
+    public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string szExeFile;
 }
 
 [StructLayout(LayoutKind.Sequential)]
