@@ -294,9 +294,26 @@ async function handleSignal(data) {
   }
 }
 
-function connectSocket() {
+async function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  socket = new WebSocket(`${protocol}://${location.host}/ws`);
+  let ticket = '';
+  try {
+    const res = await fetch('/api/ws-ticket', { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      ticket = data.ticket || '';
+    }
+  } catch {
+    // Cookie on the upgrade may still work.
+  }
+  const query = ticket ? `?ticket=${encodeURIComponent(ticket)}` : '';
+  socket = new WebSocket(`${protocol}://${location.host}/ws${query}`);
+  let opened = false;
+
+  socket.addEventListener('open', () => {
+    opened = true;
+    showRoomError('');
+  });
 
   socket.addEventListener('message', async (event) => {
     let msg;
@@ -350,7 +367,11 @@ function connectSocket() {
     if (!blockedView.hidden) return;
     setPeerStatus(false);
     closePeerConnection();
-    showRoomError('Disconnected from the room.');
+    showRoomError(
+      opened
+        ? 'Disconnected from the room.'
+        : 'Live connection failed. In Cloudflare, enable Network → WebSockets, then refresh.'
+    );
   });
 }
 
@@ -367,7 +388,7 @@ async function enterRoom() {
   setRemoteSharing(false);
   setPeerStatus(false);
   applyLayout();
-  connectSocket();
+  await connectSocket();
 }
 
 loginForm.addEventListener('submit', async (event) => {

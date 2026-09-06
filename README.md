@@ -35,6 +35,10 @@ Open http://localhost:3000 in two browser profiles (or two browsers). Screen cap
 
 Same-origin WebSocket (`/ws`) needs no extra Traefik setting when this is a single service. `GET /health` returns `ok`.
 
+Leave **Publish Directory** empty. This is a Node app, not a static site.
+
+If the domain is proxied through **Cloudflare**, turn on **Network → WebSockets**. Bot Fight Mode or a WAF rule on `/ws` will also block the room. SSL/TLS should be **Full (strict)**.
+
 ## Notes
 
 - Only two clients can sit in the room. A third login sees “Room is full.”

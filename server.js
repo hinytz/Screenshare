@@ -66,46 +66,19 @@ function passwordMatches(input) {
   return Boolean(APP_PASSWORD) && crypto.timingSafeEqual(a, b);
 }
 
-function parseCookieHeader(header) {
-  const out = {};
-  if (!header) return out;
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    const key = part.slice(0, eq).trim();
-    try {
-      out[key] = decodeURIComponent(part.slice(eq + 1).trim());
-    } catch {
-      out[key] = part.slice(eq + 1).trim();
-    }
-  }
-  return out;
+const parseCookies = cookieParser(SESSION_SECRET);
+const tickets = new Map();
+const TICKET_MS = 60_000;
+
+function readSession(req) {
+  return (req.signedCookies && req.signedCookies.session) || null;
 }
 
-function unsignCookie(input, secret) {
-  if (!input || !input.startsWith('s:')) return null;
-  const signed = input.slice(2);
-  const i = signed.lastIndexOf('.');
-  if (i === -1) return null;
-  const value = signed.slice(0, i);
-  const mac = signed.slice(i + 1);
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(value)
-    .digest('base64')
-    .replace(/=+$/, '');
-  const a = Buffer.from(mac);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return null;
-  return crypto.timingSafeEqual(a, b) ? value : null;
-}
-
-function readSession(cookieHeaderOrReq) {
-  if (cookieHeaderOrReq && cookieHeaderOrReq.signedCookies) {
-    return cookieHeaderOrReq.signedCookies.session || null;
-  }
-  const raw = parseCookieHeader(cookieHeaderOrReq).session;
-  return unsignCookie(raw, SESSION_SECRET);
+function takeTicket(ticket) {
+  if (!ticket) return false;
+  const exp = tickets.get(ticket);
+  tickets.delete(ticket);
+  return Boolean(exp && exp > Date.now());
 }
 
 function isSecureRequest(req) {
@@ -150,12 +123,18 @@ app.post('/api/login', (req, res) => {
   res.cookie('session', token, {
     httpOnly: true,
     signed: true,
-    secure: isSecureRequest(req),
+    secure: process.env.NODE_ENV === 'production' || isSecureRequest(req),
     sameSite: 'lax',
     maxAge: SESSION_MS,
     path: '/',
   });
   res.json({ ok: true });
+});
+
+app.get('/api/ws-ticket', requireSession, (_req, res) => {
+  const ticket = crypto.randomBytes(24).toString('hex');
+  tickets.set(ticket, Date.now() + TICKET_MS);
+  res.json({ ticket });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -175,27 +154,33 @@ function broadcastToOthers(from, payload) {
   }
 }
 
+function rejectUpgrade(socket, status, message) {
+  socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
+  socket.destroy();
+}
+
 server.on('upgrade', (req, socket, head) => {
-  let pathname = '/';
-  try {
-    pathname = new URL(req.url, 'http://localhost').pathname;
-  } catch {
-    socket.destroy();
-    return;
-  }
-  if (pathname !== '/ws') {
-    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-    socket.destroy();
-    return;
-  }
-  const token = readSession(req.headers.cookie);
-  if (!token || !sessions.has(token)) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-    socket.destroy();
-    return;
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit('connection', ws, req);
+  parseCookies(req, {}, () => {
+    let parsed;
+    try {
+      parsed = new URL(req.url, 'http://localhost');
+    } catch {
+      rejectUpgrade(socket, 400, 'Bad Request');
+      return;
+    }
+    if (parsed.pathname !== '/ws' && parsed.pathname !== '/api/ws') {
+      rejectUpgrade(socket, 404, 'Not Found');
+      return;
+    }
+    const ticketOk = takeTicket(parsed.searchParams.get('ticket'));
+    const token = readSession(req);
+    if (!ticketOk && (!token || !sessions.has(token))) {
+      rejectUpgrade(socket, 401, 'Unauthorized');
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
   });
 });
 
