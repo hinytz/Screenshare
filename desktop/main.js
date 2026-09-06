@@ -1,21 +1,34 @@
 'use strict';
 
 const { app, BrowserWindow, desktopCapturer, ipcMain, session } = require('electron');
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_URL = 'https://screenshare.hinytz.com';
 
+let nativeCapture = null;
+try {
+  nativeCapture = require('electron-native-screenshare');
+} catch (err) {
+  console.error('[loopback] native module load failed', err);
+}
+
 let mainWindow = null;
 let pickerWindow = null;
 let loopbackProc = null;
+let nativeActive = false;
 let selectedSourceId = null;
 let pickerResolver = null;
 
 function startUrl() {
   if (process.env.SCREENSHARE_URL) return process.env.SCREENSHARE_URL;
   return app.isPackaged ? DEFAULT_URL : 'http://localhost:3000';
+}
+
+function appIcon() {
+  const icon = path.join(__dirname, 'build', 'icon.ico');
+  return fs.existsSync(icon) ? icon : undefined;
 }
 
 function helperPath() {
@@ -31,7 +44,145 @@ function parseHwnd(sourceId) {
   return match ? Number(match[1]) : null;
 }
 
+function nativeAvailable() {
+  return Boolean(nativeCapture && nativeCapture.isAvailable());
+}
+
+function snapshotProcesses() {
+  try {
+    const out = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress',
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 20 * 1024 * 1024 }
+    );
+    const rows = JSON.parse(out);
+    const list = Array.isArray(rows) ? rows : [rows];
+    const map = new Map();
+    for (const row of list) {
+      if (!row || row.ProcessId == null) continue;
+      map.set(Number(row.ProcessId), {
+        parent: Number(row.ParentProcessId) || 0,
+        name: String(row.Name || ''),
+      });
+    }
+    return map;
+  } catch (err) {
+    console.error('[loopback] process snapshot failed', err);
+    return new Map();
+  }
+}
+
+function resolveSameImageRoot(pid) {
+  const processes = snapshotProcesses();
+  const start = processes.get(pid);
+  if (!start) return { pid, image: '?' };
+  let image = start.name;
+  let current = pid;
+  const seen = new Set([current]);
+  while (true) {
+    const entry = processes.get(current);
+    if (!entry) break;
+    const parent = entry.parent;
+    if (!parent || seen.has(parent)) break;
+    const parentEntry = processes.get(parent);
+    if (!parentEntry) break;
+    if (parentEntry.name.toLowerCase() !== image.toLowerCase()) break;
+    seen.add(parent);
+    current = parent;
+    image = parentEntry.name;
+  }
+  return { pid: current, image };
+}
+
+function stopNativeLoopback() {
+  if (!nativeActive) return;
+  nativeActive = false;
+  if (!nativeCapture) return;
+  try {
+    nativeCapture.stopCapture();
+  } catch {
+    // already stopped
+  }
+}
+
+function startNativeLoopback(target) {
+  if (!nativeAvailable()) {
+    return {
+      ok: false,
+      error: nativeCapture && nativeCapture.getLoadError
+        ? nativeCapture.getLoadError()
+        : 'Native audio module is not built.',
+    };
+  }
+
+  stopNativeLoopback();
+
+  let includeMode = false;
+  let pid = process.pid;
+
+  if (target && target.system) {
+    includeMode = false;
+    pid = process.pid;
+  } else if (target && target.hwnd) {
+    includeMode = true;
+    const hwndPid = nativeCapture.getPidFromWindowHandle(Number(target.hwnd));
+    if (!hwndPid) return { ok: false, error: 'Could not resolve window process.' };
+    const root = resolveSameImageRoot(hwndPid);
+    pid = root.pid;
+    console.error(`[loopback] hwnd pid ${hwndPid} -> root ${pid} ${root.image}`);
+  } else if (target && target.pid) {
+    includeMode = true;
+    const root = resolveSameImageRoot(Number(target.pid));
+    pid = root.pid;
+    console.error(`[loopback] pid ${target.pid} -> root ${pid} ${root.image}`);
+  }
+
+  try {
+    const started = nativeCapture.startCapture(pid, includeMode, (data) => {
+      sendPcm(data);
+    });
+    if (!started) return { ok: false, error: 'Native audio capture failed to start.' };
+    nativeActive = true;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Native audio capture failed.' };
+  }
+}
+
+function startHelperLoopback(target) {
+  const exe = helperPath();
+  if (!exe) {
+    return { ok: false, error: 'Loopback helper is not built yet.' };
+  }
+  const args = [];
+  if (target && target.system) args.push('--system');
+  else if (target && target.pid) args.push('--pid', String(target.pid));
+  else if (target && target.hwnd) args.push('--hwnd', String(target.hwnd));
+  else args.push('--system');
+
+  const child = spawn(exe, args, {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  loopbackProc = child;
+  child.stdout.on('data', (buf) => sendPcm(buf));
+  child.stderr.on('data', (buf) => {
+    const text = String(buf).trim();
+    if (text) console.error('[loopback]', text);
+  });
+  child.on('exit', () => {
+    if (loopbackProc === child) loopbackProc = null;
+  });
+  return { ok: true };
+}
+
 function stopLoopback() {
+  stopNativeLoopback();
   if (!loopbackProc) return;
   const child = loopbackProc;
   loopbackProc = null;
@@ -49,6 +200,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 520,
     backgroundColor: '#000000',
+    icon: appIcon(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -112,6 +264,7 @@ function showSourcePicker() {
       width: 760,
       height: 560,
       backgroundColor: '#000000',
+      icon: appIcon(),
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, 'picker-preload.js'),
@@ -185,30 +338,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle('loopback:start', (_event, target) => {
     stopLoopback();
-    const exe = helperPath();
-    if (!exe) {
-      return { ok: false, error: 'Loopback helper is not built yet.' };
-    }
-    const args = [];
-    if (target && target.system) args.push('--system');
-    else if (target && target.pid) args.push('--pid', String(target.pid));
-    else if (target && target.hwnd) args.push('--hwnd', String(target.hwnd));
-    else args.push('--system');
-
-    const child = spawn(exe, args, {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    loopbackProc = child;
-    child.stdout.on('data', (buf) => sendPcm(buf));
-    child.stderr.on('data', (buf) => {
-      const text = String(buf).trim();
-      if (text) console.error('[loopback]', text);
-    });
-    child.on('exit', () => {
-      if (loopbackProc === child) loopbackProc = null;
-    });
-    return { ok: true };
+    const native = startNativeLoopback(target);
+    if (native.ok) return native;
+    console.error('[loopback] native failed, falling back', native.error);
+    const fallback = startHelperLoopback(target);
+    if (fallback.ok) return fallback;
+    return native.error ? native : fallback;
   });
 
   ipcMain.handle('loopback:stop', () => {
