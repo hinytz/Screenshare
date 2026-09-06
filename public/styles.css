@@ -355,9 +355,20 @@ button:disabled {
   display: none;
 }
 
-#share-btn {
+.bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   margin-left: auto;
+}
+
+#change-btn,
+#share-btn {
   padding: 0.5rem 0.85rem;
+}
+
+#change-btn[hidden] {
+  display: none;
 }
 
 #share-btn[data-sharing="true"] {
