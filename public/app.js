@@ -817,10 +817,16 @@ function collectStackItems() {
     items.push({ kind: 'camera', ...cam });
   }
   if (featuredView.kind === 'camera') {
-    const screen = featuredScreenTrack();
-    if (screen) items.push({ kind: 'screen', peerId: featured, track: screen });
+    items.push({ kind: 'screen', peerId: featured, track: featuredScreenTrack() });
   }
   return items;
+}
+
+function unfeatureCamera() {
+  featuredView = { kind: 'pane' };
+  renderCamFeature();
+  renderCamStack();
+  placeCamChrome();
 }
 
 function placeCamChrome() {
@@ -863,16 +869,24 @@ function renderCamStack() {
     button.style.zIndex = String(index);
     button.style.right = `${(arr.length - 1 - index) * 12}px`;
     button.style.bottom = `${(arr.length - 1 - index) * 12}px`;
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.srcObject = new MediaStream([item.track]);
-    button.append(video);
+    if (item.track) {
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.srcObject = new MediaStream([item.track]);
+      button.append(video);
+    } else {
+      button.classList.add('cam-tile-idle');
+      button.title = 'Show room';
+    }
     button.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (item.kind === 'screen') featuredView = { kind: 'pane' };
-      else featuredView = { kind: 'camera', peerId: item.peerId, mid: item.mid };
+      if (item.kind === 'screen') {
+        unfeatureCamera();
+        return;
+      }
+      featuredView = { kind: 'camera', peerId: item.peerId, mid: item.mid };
       renderCamFeature();
       renderCamStack();
       placeCamChrome();
@@ -968,23 +982,34 @@ function setFloatOpen(open) {
   floatBtn.dataset.open = open ? 'true' : 'false';
 }
 
+function floatDoc() {
+  try {
+    if (!floatWin || floatWin.closed) return null;
+    return floatWin.document;
+  } catch {
+    return null;
+  }
+}
+
 function syncFloatWindow() {
-  if (!floatWin || floatWin.closed) return;
-  const doc = floatWin.document;
+  const doc = floatDoc();
+  if (!doc) return false;
   const strip = doc.getElementById('cams');
   const empty = doc.getElementById('empty');
-  if (!strip || !empty) return;
+  if (!strip || !empty) return false;
   const cams = collectRemoteCameras();
   strip.replaceChildren();
   empty.hidden = cams.length > 0;
   for (const cam of cams) {
     const video = doc.createElement('video');
     video.autoplay = true;
-    video.playsInline = true;
     video.muted = true;
+    video.playsInline = true;
     video.srcObject = new MediaStream([cam.track]);
+    video.play().catch(() => {});
     strip.append(video);
   }
+  return true;
 }
 
 function closeFloatWindow() {
@@ -1005,8 +1030,12 @@ function openFloatWindow() {
     return;
   }
   const onReady = () => syncFloatWindow();
-  if (floatWin.document.readyState === 'complete') onReady();
-  else floatWin.addEventListener('load', onReady);
+  try {
+    floatWin.addEventListener('load', onReady);
+  } catch {
+    // Electron may replace this window after setWindowOpenHandler.
+  }
+  onReady();
   if (floatPoll) clearInterval(floatPoll);
   floatPoll = setInterval(() => {
     if (!floatWin || floatWin.closed) {
@@ -1014,7 +1043,9 @@ function openFloatWindow() {
       floatPoll = null;
       floatWin = null;
       setFloatOpen(false);
+      return;
     }
+    syncFloatWindow();
   }, 400);
   setFloatOpen(true);
 }
@@ -1423,7 +1454,16 @@ floatBtn.addEventListener('click', () => {
 camFeature.addEventListener('click', (event) => {
   event.stopPropagation();
   const pane = getFeaturedPane();
-  if (pane) toggleFullscreen(pane);
+  if (!pane || !isLive(pane)) {
+    unfeatureCamera();
+    return;
+  }
+  toggleFullscreen(pane);
+});
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin) return;
+  if (event.data && event.data.type === 'float-ready') syncFloatWindow();
 });
 
 document.addEventListener('fullscreenchange', () => {

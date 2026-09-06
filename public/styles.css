@@ -281,6 +281,11 @@ button:disabled {
   background: var(--bg);
 }
 
+.cam-tile-idle {
+  background: var(--panel);
+  background-image: radial-gradient(circle at 50% 50%, #2a2a2a 0 0.22rem, transparent 0.24rem);
+}
+
 .pane-meta {
   position: absolute;
   top: 0;

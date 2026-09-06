@@ -103,6 +103,17 @@
       document.getElementById('close').addEventListener('click', () => {
         window.close();
       });
+      function notifyOpener() {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'float-ready' }, location.origin);
+          }
+        } catch {
+          // opener gone
+        }
+      }
+      notifyOpener();
+      window.addEventListener('load', notifyOpener);
     </script>
   </body>
 </html>
