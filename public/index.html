@@ -45,22 +45,31 @@
           <p class="pane-empty">Not sharing</p>
         </section>
         <div id="pip-rail" class="pip-rail"></div>
+        <video id="cam-feature" class="cam-feature" autoplay playsinline muted hidden></video>
+        <div id="cam-stack" class="cam-stack"></div>
       </main>
       <footer class="bar">
         <p id="peer-status" class="status">Waiting</p>
         <p id="room-error" class="error bar-error" hidden></p>
         <div class="bar-actions">
+          <button id="float-btn" type="button" hidden>Pop-out cameras</button>
           <button id="change-btn" type="button" hidden>Change screen</button>
+          <button id="camera-btn" type="button" aria-label="Camera" aria-pressed="false" data-live="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.5 8.2A1.7 1.7 0 0 1 5.2 6.5h8.6a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7V8.2Zm13.8.9 4.1-2.4c.5-.3 1.1.1 1.1.7v9.2c0 .6-.6 1-1.1.7l-4.1-2.4V9.1Z"/>
+            </svg>
+          </button>
           <button id="share-btn" type="button">Share screen</button>
         </div>
       </footer>
       <div id="picker" class="picker" hidden>
         <div class="picker-card">
           <header class="picker-head">
-            <p class="wordmark">Share</p>
+            <p class="wordmark" id="picker-title">Share</p>
             <button id="picker-cancel" type="button">Cancel</button>
           </header>
           <div id="quality-row" class="quality-row" role="group" aria-label="Stream quality"></div>
+          <video id="camera-preview" class="camera-preview" autoplay playsinline muted hidden></video>
           <div id="picker-grid" class="picker-grid"></div>
           <button id="picker-continue" class="picker-continue" type="button" hidden>Continue</button>
         </div>

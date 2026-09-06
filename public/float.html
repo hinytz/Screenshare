@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Cameras</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #e8e4dc;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+
+      .float-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        height: 2rem;
+        padding: 0 0.65rem;
+        border-bottom: 1px solid #1c1c1c;
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+
+      .float-head span {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.62rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #7a7670;
+      }
+
+      .float-head button {
+        -webkit-app-region: no-drag;
+        font: inherit;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.62rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #e8e4dc;
+        background: #0a0a0a;
+        border: 1px solid #1c1c1c;
+        padding: 0.2rem 0.45rem;
+        cursor: pointer;
+      }
+
+      #cams {
+        flex: 1;
+        display: flex;
+        align-items: stretch;
+        min-height: 0;
+        background: #000;
+      }
+
+      #cams:empty {
+        display: none;
+      }
+
+      #cams video {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+      }
+
+      #empty {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        margin: 0;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #7a7670;
+      }
+
+      #empty[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="float-head">
+      <span>Cameras</span>
+      <button id="close" type="button">Close</button>
+    </header>
+    <div id="cams"></div>
+    <p id="empty">No remote cameras</p>
+    <script>
+      document.getElementById('close').addEventListener('click', () => {
+        window.close();
+      });
+    </script>
+  </body>
+</html>

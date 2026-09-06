@@ -10,13 +10,19 @@ const localVideo = document.getElementById('local-video');
 const paneYou = document.getElementById('pane-you');
 const shareBtn = document.getElementById('share-btn');
 const changeBtn = document.getElementById('change-btn');
+const cameraBtn = document.getElementById('camera-btn');
+const floatBtn = document.getElementById('float-btn');
 const peerStatus = document.getElementById('peer-status');
 const roomError = document.getElementById('room-error');
 const picker = document.getElementById('picker');
+const pickerTitle = document.getElementById('picker-title');
 const pickerGrid = document.getElementById('picker-grid');
 const pickerCancel = document.getElementById('picker-cancel');
 const qualityRow = document.getElementById('quality-row');
 const pickerContinue = document.getElementById('picker-continue');
+const cameraPreview = document.getElementById('camera-preview');
+const camFeature = document.getElementById('cam-feature');
+const camStack = document.getElementById('cam-stack');
 const desktop = window.screenshareDesktop;
 
 const QUALITY_PRESETS = {
@@ -37,9 +43,23 @@ let iceServers = DEFAULT_ICE;
 let events = null;
 let myId = null;
 let featured = 'you';
+let featuredView = { kind: 'pane' };
 let localStream = null;
+let cameraStream = null;
+let cameraPreviewStream = null;
+let floatWin = null;
+let floatPoll = null;
 let mediaUnlocked = false;
 const peers = new Map();
+const CAMERA_CONSTRAINTS = {
+  video: {
+    facingMode: 'user',
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30 },
+  },
+  audio: false,
+};
 let desktopAudio = {
   ctx: null,
   node: null,
@@ -63,6 +83,18 @@ function isLive(pane) {
 
 function allPanes() {
   return [paneYou, ...[...peers.values()].map((peer) => peer.pane)];
+}
+
+function peerByPc(pc) {
+  for (const peer of peers.values()) {
+    if (peer.pc === pc) return peer;
+  }
+  return null;
+}
+
+function getFeaturedPane() {
+  if (featured === 'you') return paneYou;
+  return peers.get(featured)?.pane || paneYou;
 }
 
 function setPaneLive(pane, live, label) {
@@ -89,6 +121,7 @@ function applyLayout() {
     if (isFeatured) stage.insertBefore(pane, pipRail);
     else pipRail.append(pane);
   }
+  placeCamChrome();
 }
 
 function setPeerStatus() {
@@ -156,7 +189,10 @@ function onPaneClick(event, pane) {
   const id = pane === paneYou ? 'you' : pane.dataset.peer;
   if (pane.dataset.slot === 'pip') {
     featured = id;
+    featuredView = { kind: 'pane' };
     applyLayout();
+    renderCamFeature();
+    renderCamStack();
     return;
   }
   toggleFullscreen(pane);
@@ -216,8 +252,10 @@ function preferVideoCodecs(pc) {
 async function applyVideoQuality(pc) {
   preferVideoCodecs(pc);
   const preset = currentQuality();
+  const peer = peerByPc(pc);
   for (const sender of pc.getSenders()) {
     if (!sender.track || sender.track.kind !== 'video') continue;
+    if (peer && sender === peer.cameraSender) continue;
     try {
       const params = sender.getParameters();
       params.degradationPreference = 'maintain-resolution';
@@ -233,6 +271,26 @@ async function applyVideoQuality(pc) {
     } catch (err) {
       console.warn('Could not apply video quality', err);
     }
+  }
+}
+
+async function applyCameraQuality(peer) {
+  const sender = peer && peer.cameraSender;
+  if (!sender || !sender.track) return;
+  try {
+    const params = sender.getParameters();
+    params.degradationPreference = 'maintain-framerate';
+    params.encodings = [
+      {
+        ...(params.encodings && params.encodings[0] ? params.encodings[0] : {}),
+        maxBitrate: 1_500_000,
+        maxFramerate: 30,
+        scaleResolutionDownBy: 1,
+      },
+    ];
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn('Could not apply camera quality', err);
   }
 }
 
@@ -258,11 +316,24 @@ function attachDisplayAudio(track) {
 }
 
 function publishLocalTrack(pc, track, stream) {
-  const transceiver = pc.getTransceivers().find((item) => {
-    return item.sender.track?.kind === track.kind || item.receiver.track?.kind === track.kind;
-  });
-  if (transceiver) return transceiver.sender.replaceTrack(track);
-  pc.addTrack(track, stream);
+  const peer = peerByPc(pc);
+  if (peer) {
+    const stored = peer.screenSenders[track.kind];
+    if (stored && pc.getSenders().includes(stored)) {
+      return stored.replaceTrack(track);
+    }
+    const reusable = pc.getSenders().find((sender) => {
+      if (sender === peer.cameraSender) return false;
+      if (sender === peer.screenSenders.video || sender === peer.screenSenders.audio) return false;
+      return sender.track?.kind === track.kind;
+    });
+    if (reusable) {
+      peer.screenSenders[track.kind] = reusable;
+      return reusable.replaceTrack(track);
+    }
+  }
+  const sender = pc.addTrack(track, stream);
+  if (peer) peer.screenSenders[track.kind] = sender;
   return Promise.resolve();
 }
 
@@ -331,6 +402,17 @@ function hidePicker() {
   pickerGrid.replaceChildren();
   pickerGrid.hidden = false;
   pickerContinue.hidden = true;
+  pickerContinue.textContent = 'Continue';
+  qualityRow.hidden = false;
+  if (pickerTitle) pickerTitle.textContent = 'Share';
+  if (cameraPreviewStream && cameraPreviewStream !== cameraStream) {
+    for (const track of cameraPreviewStream.getTracks()) track.stop();
+    cameraPreviewStream = null;
+  }
+  if (cameraPreview) {
+    cameraPreview.srcObject = null;
+    cameraPreview.hidden = true;
+  }
 }
 
 function openPicker() {
@@ -508,7 +590,7 @@ async function switchLocalShare(stream) {
 }
 
 async function changeScreen() {
-  if (!localStream) return;
+  if (!localStream || !picker.hidden) return;
   showRoomError('');
   changeBtn.disabled = true;
   replacingShare = true;
@@ -536,6 +618,7 @@ async function changeScreen() {
 }
 
 async function startShare() {
+  if (!picker.hidden) return;
   showRoomError('');
   try {
     if (desktop) {
@@ -566,9 +649,120 @@ function stopShare() {
   localVideo.srcObject = null;
   setLocalSharing(false);
   for (const peer of peers.values()) {
-    for (const sender of peer.pc.getSenders()) {
-      if (sender.track) sender.replaceTrack(null).catch(() => {});
+    for (const kind of ['video', 'audio']) {
+      const sender = peer.screenSenders[kind];
+      if (sender && sender.track) sender.replaceTrack(null).catch(() => {});
     }
+  }
+  if (featuredView.kind === 'camera') {
+    renderCamFeature();
+    renderCamStack();
+  }
+}
+
+function setCameraLive(live) {
+  cameraBtn.dataset.live = live ? 'true' : 'false';
+  cameraBtn.setAttribute('aria-pressed', live ? 'true' : 'false');
+}
+
+function cameraTrack() {
+  return cameraStream ? cameraStream.getVideoTracks().find((track) => track.readyState === 'live') || null : null;
+}
+
+function signalCameraToPeer(peer, on) {
+  const sender = peer.cameraSender;
+  if (!sender) return;
+  const transceiver = peer.pc.getTransceivers().find((item) => item.sender === sender);
+  if (!transceiver || transceiver.mid == null) return;
+  sendSignal(peer.id, { type: 'source', role: 'camera', mid: String(transceiver.mid), on });
+}
+
+async function publishCameraToPeer(peer) {
+  const track = cameraTrack();
+  if (!track) return;
+  if (peer.cameraSender && peer.pc.getSenders().includes(peer.cameraSender)) {
+    await peer.cameraSender.replaceTrack(track);
+  } else {
+    peer.cameraSender = peer.pc.addTrack(track, cameraStream);
+  }
+  preferVideoCodecs(peer.pc);
+  await applyCameraQuality(peer);
+  signalCameraToPeer(peer, true);
+}
+
+async function attachCameraStream(stream) {
+  cameraStream = stream;
+  setCameraLive(true);
+  const video = stream.getVideoTracks()[0];
+  if (video) {
+    video.addEventListener('ended', () => {
+      if (cameraStream === stream) stopCamera();
+    });
+  }
+  await Promise.all([...peers.values()].map((peer) => publishCameraToPeer(peer)));
+}
+
+function previewAndConfirmCamera() {
+  return new Promise(async (resolve, reject) => {
+    openPicker();
+    if (pickerTitle) pickerTitle.textContent = 'Camera';
+    qualityRow.hidden = true;
+    pickerGrid.replaceChildren();
+    pickerGrid.hidden = true;
+    pickerContinue.hidden = false;
+    pickerContinue.textContent = 'Confirm';
+    try {
+      cameraPreviewStream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
+    } catch (err) {
+      hidePicker();
+      reject(err);
+      return;
+    }
+    cameraPreview.srcObject = cameraPreviewStream;
+    cameraPreview.hidden = false;
+    cameraPreview.play().catch(() => {});
+    pickerCancel.onclick = () => {
+      hidePicker();
+      resolve(null);
+    };
+    pickerContinue.onclick = () => {
+      const stream = cameraPreviewStream;
+      cameraPreviewStream = null;
+      hidePicker();
+      resolve(stream);
+    };
+  });
+}
+
+async function startCamera() {
+  if (!picker.hidden) return;
+  showRoomError('');
+  try {
+    const stream = await previewAndConfirmCamera();
+    if (!stream) return;
+    await attachCameraStream(stream);
+  } catch (err) {
+    if (cameraPreviewStream && cameraPreviewStream !== cameraStream) {
+      for (const track of cameraPreviewStream.getTracks()) track.stop();
+      cameraPreviewStream = null;
+    }
+    if (err && err.name === 'NotAllowedError') {
+      showRoomError('Camera was blocked.');
+      return;
+    }
+    showRoomError('Could not start camera.');
+  }
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    for (const track of cameraStream.getTracks()) track.stop();
+    cameraStream = null;
+  }
+  setCameraLive(false);
+  for (const peer of peers.values()) {
+    signalCameraToPeer(peer, false);
+    if (peer.cameraSender) peer.cameraSender.replaceTrack(null).catch(() => {});
   }
 }
 
@@ -578,6 +772,251 @@ function remoteHasAudio(peer) {
 
 function liveRemoteTracks(peer) {
   return peer.stream ? peer.stream.getTracks().filter((track) => track.readyState === 'live') : [];
+}
+
+function livePaneTracks(peer) {
+  return liveRemoteTracks(peer);
+}
+
+function shouldTreatAsCamera(peer, mid, track) {
+  if (!track || track.kind !== 'video') return false;
+  if (mid && peer.cameraMids.has(mid)) return true;
+  const paneVideos = peer.stream
+    ? peer.stream.getVideoTracks().filter((item) => item.readyState === 'live' && item !== track)
+    : [];
+  const camLive = [...peer.cameraTracks.values()].filter((item) => item.readyState === 'live').length;
+  return peer.cameraMids.size > 0 && paneVideos.length + camLive === 0;
+}
+
+function featuredScreenTrack() {
+  if (featured === 'you') {
+    return localStream ? localStream.getVideoTracks().find((track) => track.readyState === 'live') || null : null;
+  }
+  const peer = peers.get(featured);
+  if (!peer || !peer.stream) return null;
+  return peer.stream.getVideoTracks().find((track) => track.readyState === 'live') || null;
+}
+
+function collectRemoteCameras() {
+  const cams = [];
+  for (const peer of peers.values()) {
+    for (const [mid, track] of peer.cameraTracks) {
+      if (track.readyState !== 'live') continue;
+      cams.push({ peerId: peer.id, mid, track });
+    }
+  }
+  return cams;
+}
+
+function collectStackItems() {
+  const items = [];
+  for (const cam of collectRemoteCameras()) {
+    if (featuredView.kind === 'camera' && featuredView.peerId === cam.peerId && featuredView.mid === cam.mid) {
+      continue;
+    }
+    items.push({ kind: 'camera', ...cam });
+  }
+  if (featuredView.kind === 'camera') {
+    const screen = featuredScreenTrack();
+    if (screen) items.push({ kind: 'screen', peerId: featured, track: screen });
+  }
+  return items;
+}
+
+function placeCamChrome() {
+  const fs = fullscreenElement();
+  const pane = fs && fs.classList && fs.classList.contains('pane') ? fs : getFeaturedPane();
+  if (pane) pane.append(camFeature);
+  if (fs && fs.classList && fs.classList.contains('pane')) fs.append(camStack);
+  else stage.append(camStack);
+}
+
+function renderCamFeature() {
+  if (featuredView.kind !== 'camera') {
+    camFeature.hidden = true;
+    camFeature.srcObject = null;
+    return;
+  }
+  const peer = peers.get(featuredView.peerId);
+  const track = peer && peer.cameraTracks.get(featuredView.mid);
+  if (!track || track.readyState !== 'live') {
+    featuredView = { kind: 'pane' };
+    camFeature.hidden = true;
+    camFeature.srcObject = null;
+    return;
+  }
+  camFeature.hidden = false;
+  camFeature.srcObject = new MediaStream([track]);
+  camFeature.play().catch(() => {});
+}
+
+function renderCamStack() {
+  const items = collectStackItems();
+  camStack.replaceChildren();
+  const extra = Math.max(0, items.length - 1) * 12;
+  camStack.style.width = `calc(8rem + ${extra}px)`;
+  camStack.style.height = `calc(6rem + ${extra}px)`;
+  items.forEach((item, index, arr) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cam-tile';
+    button.style.zIndex = String(index);
+    button.style.right = `${(arr.length - 1 - index) * 12}px`;
+    button.style.bottom = `${(arr.length - 1 - index) * 12}px`;
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.srcObject = new MediaStream([item.track]);
+    button.append(video);
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (item.kind === 'screen') featuredView = { kind: 'pane' };
+      else featuredView = { kind: 'camera', peerId: item.peerId, mid: item.mid };
+      renderCamFeature();
+      renderCamStack();
+      placeCamChrome();
+    });
+    camStack.append(button);
+  });
+  syncFloatWindow();
+}
+
+function refreshRemoteMedia() {
+  renderCamFeature();
+  renderCamStack();
+}
+
+function addRemoteCamera(peer, mid, track) {
+  if (peer.stream && peer.stream.getTracks().includes(track)) {
+    peer.stream.removeTrack(track);
+  }
+  peer.cameraTracks.set(mid || track.id, track);
+  watchCameraTrack(peer, mid || track.id, track);
+  const live = livePaneTracks(peer);
+  setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
+  if (live.length) bindRemoteVideo(peer);
+  else {
+    peer.video.srcObject = null;
+    peer.unmute.hidden = true;
+  }
+  refreshRemoteMedia();
+}
+
+function watchCameraTrack(peer, mid, track) {
+  const refresh = () => {
+    if (track.readyState !== 'ended') return;
+    peer.cameraTracks.delete(mid);
+    if (featuredView.kind === 'camera' && featuredView.peerId === peer.id && featuredView.mid === mid) {
+      featuredView = { kind: 'pane' };
+    }
+    refreshRemoteMedia();
+  };
+  track.addEventListener('ended', refresh);
+}
+
+function promotePendingScreen(peer) {
+  for (const [key, track] of [...peer.pendingVideos]) {
+    if (peer.cameraMids.has(key)) continue;
+    peer.pendingVideos.delete(key);
+    if (!track || track.kind !== 'video' || track.readyState !== 'live') continue;
+    const paneVideo = peer.stream
+      ? peer.stream.getVideoTracks().find((item) => item.readyState === 'live')
+      : null;
+    if (paneVideo) continue;
+    replaceRemoteTrack(peer, track);
+    watchRemoteTrack(peer, track);
+    setPaneLive(peer.pane, true, 'Live');
+    playRemote(peer);
+  }
+}
+
+function handleSourceSignal(peer, data) {
+  const mid = data.mid != null ? String(data.mid) : '';
+  if (!mid) return;
+  if (data.on) peer.cameraMids.add(mid);
+  else peer.cameraMids.delete(mid);
+
+  if (!data.on) {
+    peer.cameraTracks.delete(mid);
+    if (featuredView.kind === 'camera' && featuredView.peerId === peer.id && featuredView.mid === mid) {
+      featuredView = { kind: 'pane' };
+    }
+    refreshRemoteMedia();
+    return;
+  }
+
+  let found = peer.pendingVideos.get(mid) || null;
+  if (found) peer.pendingVideos.delete(mid);
+  if (!found) {
+    for (const [track, trackMid] of peer.trackMids) {
+      if (trackMid === mid && track.kind === 'video' && track.readyState === 'live') {
+        found = track;
+        break;
+      }
+    }
+  }
+  if (!found && peer.stream) {
+    const only = peer.stream.getVideoTracks().filter((track) => track.readyState === 'live');
+    if (only.length === 1) found = only[0];
+  }
+  if (found) addRemoteCamera(peer, mid, found);
+  promotePendingScreen(peer);
+}
+
+function setFloatOpen(open) {
+  floatBtn.dataset.open = open ? 'true' : 'false';
+}
+
+function syncFloatWindow() {
+  if (!floatWin || floatWin.closed) return;
+  const doc = floatWin.document;
+  const strip = doc.getElementById('cams');
+  const empty = doc.getElementById('empty');
+  if (!strip || !empty) return;
+  const cams = collectRemoteCameras();
+  strip.replaceChildren();
+  empty.hidden = cams.length > 0;
+  for (const cam of cams) {
+    const video = doc.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.srcObject = new MediaStream([cam.track]);
+    strip.append(video);
+  }
+}
+
+function closeFloatWindow() {
+  if (floatWin && !floatWin.closed) floatWin.close();
+  floatWin = null;
+  if (floatPoll) {
+    clearInterval(floatPoll);
+    floatPoll = null;
+  }
+  setFloatOpen(false);
+}
+
+function openFloatWindow() {
+  if (floatWin && !floatWin.closed) return;
+  floatWin = window.open('/float.html', 'cams', 'width=800,height=280');
+  if (!floatWin) {
+    showRoomError('Could not open the camera window.');
+    return;
+  }
+  const onReady = () => syncFloatWindow();
+  if (floatWin.document.readyState === 'complete') onReady();
+  else floatWin.addEventListener('load', onReady);
+  if (floatPoll) clearInterval(floatPoll);
+  floatPoll = setInterval(() => {
+    if (!floatWin || floatWin.closed) {
+      clearInterval(floatPoll);
+      floatPoll = null;
+      floatWin = null;
+      setFloatOpen(false);
+    }
+  }, 400);
+  setFloatOpen(true);
 }
 
 function replaceRemoteTrack(peer, track) {
@@ -643,14 +1082,16 @@ async function unlockMedia() {
 function watchRemoteTrack(peer, track) {
   const refresh = () => {
     if (peer.stream && track.readyState === 'ended') peer.stream.removeTrack(track);
-    const live = liveRemoteTracks(peer);
+    const live = livePaneTracks(peer);
     setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
     if (!live.length) {
       peer.video.srcObject = null;
       peer.unmute.hidden = true;
+      if (featuredView.kind === 'camera') refreshRemoteMedia();
       return;
     }
     bindRemoteVideo(peer);
+    if (featuredView.kind === 'camera') refreshRemoteMedia();
   };
   track.addEventListener('ended', refresh);
   track.addEventListener('unmute', () => {
@@ -703,6 +1144,12 @@ function ensurePeer(id, polite) {
     makingOffer: false,
     ignoreOffer: false,
     isSettingRemoteAnswerPending: false,
+    screenSenders: { video: null, audio: null },
+    cameraSender: null,
+    cameraMids: new Set(),
+    cameraTracks: new Map(),
+    pendingVideos: new Map(),
+    trackMids: new Map(),
   };
   const pc = new RTCPeerConnection({ iceServers });
   state.pc = pc;
@@ -711,21 +1158,26 @@ function ensurePeer(id, polite) {
     sendSignal(id, { type: 'ice', candidate });
   };
 
-  pc.ontrack = ({ track, streams }) => {
+  pc.ontrack = ({ track, transceiver }) => {
     track.enabled = true;
+    const mid = transceiver && transceiver.mid != null ? String(transceiver.mid) : '';
+    if (mid) state.trackMids.set(track, mid);
     if (track.kind === 'audio') attachDisplayAudio(track);
-    if (streams && streams[0]) {
-      state.stream = streams[0];
-      for (const existing of state.stream.getTracks()) {
-        if (existing !== track && (existing.kind === track.kind || existing.readyState === 'ended')) {
-          state.stream.removeTrack(existing);
-        }
-      }
-      if (!state.stream.getTracks().includes(track)) state.stream.addTrack(track);
-    } else {
-      replaceRemoteTrack(state, track);
+    if (shouldTreatAsCamera(state, mid, track)) {
+      addRemoteCamera(state, mid, track);
+      return;
     }
-    if (liveRemoteTracks(state).length && featured === 'you' && !isLive(paneYou)) {
+    if (track.kind === 'video') {
+      const paneVideo = state.stream
+        ? state.stream.getVideoTracks().find((item) => item.readyState === 'live' && item !== track)
+        : null;
+      if (paneVideo) {
+        state.pendingVideos.set(mid || track.id, track);
+        return;
+      }
+    }
+    replaceRemoteTrack(state, track);
+    if (livePaneTracks(state).length && featured === 'you' && !isLive(paneYou)) {
       featured = id;
     }
     setPaneLive(pane, true, 'Live');
@@ -739,6 +1191,7 @@ function ensurePeer(id, polite) {
       preferVideoCodecs(pc);
       await pc.setLocalDescription();
       sendSignal(id, { type: 'sdp', description: pc.localDescription });
+      if (cameraTrack()) signalCameraToPeer(state, true);
     } catch (err) {
       console.error(err);
       showRoomError('Could not negotiate the connection.');
@@ -746,16 +1199,6 @@ function ensurePeer(id, polite) {
       state.makingOffer = false;
     }
   };
-
-  if (localStream) {
-    let hasVideo = false;
-    for (const track of localStream.getTracks()) {
-      publishLocalTrack(pc, track, localStream);
-      if (track.kind === 'video') hasVideo = true;
-    }
-    preferVideoCodecs(pc);
-    if (hasVideo) applyVideoQuality(pc);
-  }
 
   unmute.addEventListener('click', async (event) => {
     event.stopPropagation();
@@ -766,6 +1209,17 @@ function ensurePeer(id, polite) {
   });
 
   peers.set(id, state);
+
+  if (localStream) {
+    let hasVideo = false;
+    for (const track of localStream.getTracks()) {
+      publishLocalTrack(pc, track, localStream);
+      if (track.kind === 'video') hasVideo = true;
+    }
+    preferVideoCodecs(pc);
+    if (hasVideo) applyVideoQuality(pc);
+  }
+  if (cameraTrack()) publishCameraToPeer(state);
   setPeerStatus();
   applyLayout();
   return state;
@@ -781,8 +1235,12 @@ function removePeer(id) {
   peer.pane.remove();
   peers.delete(id);
   if (featured === id) featured = 'you';
+  if (featuredView.kind === 'camera' && featuredView.peerId === id) {
+    featuredView = { kind: 'pane' };
+  }
   setPeerStatus();
   applyLayout();
+  refreshRemoteMedia();
 }
 
 function closeAllPeers() {
@@ -792,6 +1250,10 @@ function closeAllPeers() {
 async function handleSignal(from, data) {
   const peer = ensurePeer(from, true);
   const { pc } = peer;
+  if (data.type === 'source') {
+    handleSourceSignal(peer, data);
+    return;
+  }
   if (data.type === 'ice') {
     try {
       await pc.addIceCandidate(data.candidate);
@@ -817,6 +1279,9 @@ async function handleSignal(from, data) {
   if (description.type === 'offer') {
     await pc.setLocalDescription();
     sendSignal(from, { type: 'sdp', description: pc.localDescription });
+    if (cameraTrack()) signalCameraToPeer(peer, true);
+  } else if (cameraTrack()) {
+    signalCameraToPeer(peer, true);
   }
 }
 
@@ -828,6 +1293,7 @@ async function handleRoomMessage(msg) {
       ensurePeer(id, true);
     }
     setPeerStatus();
+    refreshRemoteMedia();
     return;
   }
 
@@ -893,9 +1359,12 @@ async function enterRoom() {
     }
   }
   showView('room');
+  floatBtn.hidden = !desktop;
   setLocalSharing(Boolean(localStream));
+  setCameraLive(Boolean(cameraTrack()));
   setPeerStatus();
   applyLayout();
+  refreshRemoteMedia();
   await connectSocket();
 }
 
@@ -939,6 +1408,29 @@ shareBtn.addEventListener('click', () => {
 
 changeBtn.addEventListener('click', () => {
   changeScreen();
+});
+
+cameraBtn.addEventListener('click', () => {
+  if (cameraStream) stopCamera();
+  else startCamera();
+});
+
+floatBtn.addEventListener('click', () => {
+  if (floatWin && !floatWin.closed) closeFloatWindow();
+  else openFloatWindow();
+});
+
+camFeature.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const pane = getFeaturedPane();
+  if (pane) toggleFullscreen(pane);
+});
+
+document.addEventListener('fullscreenchange', () => {
+  placeCamChrome();
+});
+document.addEventListener('webkitfullscreenchange', () => {
+  placeCamChrome();
 });
 
 async function boot() {
