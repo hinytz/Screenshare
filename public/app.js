@@ -1,20 +1,30 @@
 const loginView = document.getElementById('login');
 const roomView = document.getElementById('room');
-const blockedView = document.getElementById('blocked');
 const loginForm = document.getElementById('login-form');
 const passwordInput = document.getElementById('password');
 const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
+const stage = document.querySelector('.stage');
+const pipRail = document.getElementById('pip-rail');
 const localVideo = document.getElementById('local-video');
-const remoteVideo = document.getElementById('remote-video');
 const paneYou = document.getElementById('pane-you');
-const paneThem = document.getElementById('pane-them');
 const shareBtn = document.getElementById('share-btn');
 const peerStatus = document.getElementById('peer-status');
 const roomError = document.getElementById('room-error');
-const unmuteBtn = document.getElementById('unmute');
+const picker = document.getElementById('picker');
+const pickerGrid = document.getElementById('picker-grid');
+const pickerCancel = document.getElementById('picker-cancel');
+const qualityRow = document.getElementById('quality-row');
+const pickerContinue = document.getElementById('picker-continue');
+const desktop = window.screenshareDesktop;
 
-let featured = 'them';
+const QUALITY_PRESETS = {
+  '720p30': { id: '720p30', label: '720p 30', width: 1280, height: 720, fps: 30, maxBitrate: 5_000_000 },
+  '1080p30': { id: '1080p30', label: '1080p 30', width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
+  '720p60': { id: '720p60', label: '720p 60', width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
+};
+
+let shareQuality = '1080p30';
 
 const DEFAULT_ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -23,45 +33,88 @@ const DEFAULT_ICE = [
 
 let iceServers = DEFAULT_ICE;
 let events = null;
-let pc = null;
-let polite = false;
-let makingOffer = false;
-let ignoreOffer = false;
-let isSettingRemoteAnswerPending = false;
+let myId = null;
+let featured = 'you';
 let localStream = null;
-let remoteStream = null;
+let mediaUnlocked = false;
+const peers = new Map();
+let desktopAudio = {
+  ctx: null,
+  node: null,
+  unsub: null,
+};
 
 function showView(view) {
   loginView.hidden = view !== 'login';
   roomView.hidden = view !== 'room';
-  blockedView.hidden = view !== 'blocked';
+}
+
+function peerLabel(id) {
+  return `Peer ${String(id).slice(0, 4)}`;
+}
+
+function isLive(pane) {
+  return pane && pane.dataset.live === 'true';
+}
+
+function allPanes() {
+  return [paneYou, ...[...peers.values()].map((peer) => peer.pane)];
 }
 
 function setPaneLive(pane, live, label) {
+  if (!pane) return;
   pane.dataset.live = live ? 'true' : 'false';
   pane.querySelector('.pane-state').textContent = label;
   if (!live && fullscreenElement() === pane) exitFullscreen();
   applyLayout();
 }
 
-function isLive(pane) {
-  return pane.dataset.live === 'true';
-}
-
 function applyLayout() {
-  const youLive = isLive(paneYou);
-  const themLive = isLive(paneThem);
-  if (featured === 'you' && !youLive && themLive) featured = 'them';
-  if (featured === 'them' && !themLive && youLive) featured = 'you';
-  paneYou.dataset.slot = featured === 'you' ? 'featured' : 'pip';
-  paneThem.dataset.slot = featured === 'them' ? 'featured' : 'pip';
-  paneYou.title = paneYou.dataset.slot === 'featured' ? 'Fullscreen' : 'Show this stream';
-  paneThem.title = paneThem.dataset.slot === 'featured' ? 'Fullscreen' : 'Show this stream';
+  if (featured !== 'you' && !peers.has(featured)) featured = 'you';
+  const liveRemote = [...peers.values()].find((peer) => isLive(peer.pane));
+  if (featured === 'you' && !isLive(paneYou) && liveRemote) featured = liveRemote.id;
+  if (featured !== 'you' && peers.has(featured) && !isLive(peers.get(featured).pane) && isLive(paneYou)) {
+    featured = 'you';
+  }
+
+  for (const pane of allPanes()) {
+    const id = pane === paneYou ? 'you' : pane.dataset.peer;
+    const isFeatured = featured === id;
+    pane.dataset.slot = isFeatured ? 'featured' : 'pip';
+    pane.title = isFeatured ? 'Fullscreen' : 'Show this stream';
+    if (isFeatured) stage.insertBefore(pane, pipRail);
+    else pipRail.append(pane);
+  }
 }
 
-function swapFeatured() {
-  featured = featured === 'you' ? 'them' : 'you';
-  applyLayout();
+function setPeerStatus() {
+  const count = peers.size;
+  if (!count) {
+    peerStatus.textContent = 'Waiting';
+    peerStatus.dataset.state = 'waiting';
+    return;
+  }
+  peerStatus.textContent = count === 1 ? '1 connected' : `${count} connected`;
+  peerStatus.dataset.state = 'connected';
+}
+
+function showRoomError(message) {
+  if (!message) {
+    roomError.hidden = true;
+    roomError.textContent = '';
+    return;
+  }
+  roomError.hidden = false;
+  roomError.textContent = message;
+}
+
+function setLocalSharing(sharing) {
+  shareBtn.dataset.sharing = sharing ? 'true' : 'false';
+  shareBtn.textContent = sharing ? 'Stop sharing' : 'Share screen';
+  if (sharing && ![...peers.values()].some((peer) => isLive(peer.pane))) {
+    featured = 'you';
+  }
+  setPaneLive(paneYou, sharing, sharing ? 'Live' : 'Idle');
 }
 
 function fullscreenElement() {
@@ -93,73 +146,289 @@ async function toggleFullscreen(el) {
 function onPaneClick(event, pane) {
   if (event.target.closest('button')) return;
   if (!isLive(pane)) return;
+  const peer = [...peers.values()].find((item) => item.pane === pane);
+  if (peer) unlockRemoteAudio(peer);
+  const id = pane === paneYou ? 'you' : pane.dataset.peer;
   if (pane.dataset.slot === 'pip') {
-    swapFeatured();
+    featured = id;
+    applyLayout();
     return;
   }
   toggleFullscreen(pane);
 }
 
-function setPeerStatus(connected) {
-  peerStatus.textContent = connected ? 'Connected' : 'Waiting';
-  peerStatus.dataset.state = connected ? 'connected' : 'waiting';
-}
-
-function showRoomError(message) {
-  if (!message) {
-    roomError.hidden = true;
-    roomError.textContent = '';
-    return;
-  }
-  roomError.hidden = false;
-  roomError.textContent = message;
-}
-
-function setLocalSharing(sharing) {
-  shareBtn.dataset.sharing = sharing ? 'true' : 'false';
-  shareBtn.textContent = sharing ? 'Stop sharing' : 'Share screen';
-  if (sharing && !isLive(paneThem)) featured = 'you';
-  setPaneLive(paneYou, sharing, sharing ? 'Live' : 'Idle');
-}
-
-function setRemoteSharing(sharing) {
-  if (sharing && !isLive(paneYou)) featured = 'them';
-  setPaneLive(paneThem, sharing, sharing ? 'Live' : 'Idle');
-}
-
-function send(payload) {
+function sendSignal(to, data) {
   fetch('/api/signal', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ type: 'signal', to, data }),
   }).catch(() => {
     showRoomError('Could not send signaling data.');
   });
 }
 
-function attachLocalStream(stream) {
+function currentQuality() {
+  return QUALITY_PRESETS[shareQuality] || QUALITY_PRESETS['1080p30'];
+}
+
+function videoCaptureConstraints() {
+  const preset = currentQuality();
+  return {
+    cursor: 'never',
+    width: { ideal: preset.width },
+    height: { ideal: preset.height },
+    frameRate: { ideal: preset.fps },
+  };
+}
+
+function applyCaptureHint(track) {
+  if (track.kind === 'video' && 'contentHint' in track) track.contentHint = 'detail';
+}
+
+async function applyVideoQuality(pc) {
+  const preset = currentQuality();
+  for (const sender of pc.getSenders()) {
+    if (!sender.track || sender.track.kind !== 'video') continue;
+    try {
+      const params = sender.getParameters();
+      params.degradationPreference = 'maintain-resolution';
+      params.encodings = [
+        {
+          ...(params.encodings && params.encodings[0] ? params.encodings[0] : {}),
+          maxBitrate: preset.maxBitrate,
+          maxFramerate: preset.fps,
+          scaleResolutionDownBy: 1,
+        },
+      ];
+      await sender.setParameters(params);
+    } catch (err) {
+      console.warn('Could not apply video quality', err);
+    }
+  }
+}
+
+function renderQualityRow() {
+  qualityRow.replaceChildren();
+  for (const preset of Object.values(QUALITY_PRESETS)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'quality-btn';
+    button.textContent = preset.label;
+    button.setAttribute('aria-pressed', preset.id === shareQuality ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      shareQuality = preset.id;
+      renderQualityRow();
+    });
+    qualityRow.append(button);
+  }
+}
+
+function attachDisplayAudio(track) {
+  track.enabled = true;
+  if ('contentHint' in track) track.contentHint = 'music';
+}
+
+async function attachLocalStream(stream) {
   localStream = stream;
   localVideo.srcObject = stream;
   setLocalSharing(true);
+  for (const track of stream.getAudioTracks()) attachDisplayAudio(track);
+  for (const track of stream.getVideoTracks()) applyCaptureHint(track);
+  const videoPcs = [];
   for (const track of stream.getTracks()) {
     track.addEventListener('ended', () => {
-      if (localStream === stream) stopShare();
+      if (localStream === stream) {
+        if (track.kind === 'audio') {
+          showRoomError('Share audio stopped. Start again and enable audio in the picker.');
+          return;
+        }
+        stopShare();
+      }
     });
-    if (pc) pc.addTrack(track, stream);
+    for (const peer of peers.values()) {
+      peer.pc.addTrack(track, stream);
+      if (track.kind === 'video') videoPcs.push(peer.pc);
+    }
   }
+  await Promise.all([...new Set(videoPcs)].map((pc) => applyVideoQuality(pc)));
+  if (!stream.getAudioTracks().length) {
+    showRoomError(
+      desktop
+        ? 'No audio on this share. The selected app may be silent, or the loopback helper is missing.'
+        : 'No audio on this share. Pick a browser tab or the whole screen, and enable audio in the picker. Sharing a window is video only.'
+    );
+  }
+}
+
+async function captureDisplay() {
+  const audio = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  };
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({
+      video: videoCaptureConstraints(),
+      audio,
+      systemAudio: 'include',
+    });
+  } catch (err) {
+    if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) {
+      return navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+        systemAudio: 'include',
+      });
+    }
+    throw err;
+  }
+}
+
+function hidePicker() {
+  picker.hidden = true;
+  pickerGrid.replaceChildren();
+  pickerGrid.hidden = false;
+  pickerContinue.hidden = true;
+}
+
+function openPicker() {
+  picker.hidden = false;
+  renderQualityRow();
+}
+
+function pickShareQuality() {
+  return new Promise((resolve) => {
+    openPicker();
+    pickerGrid.replaceChildren();
+    pickerGrid.hidden = true;
+    pickerContinue.hidden = false;
+    pickerCancel.onclick = () => {
+      hidePicker();
+      resolve(false);
+    };
+    pickerContinue.onclick = () => {
+      hidePicker();
+      resolve(true);
+    };
+  });
+}
+
+function pickDesktopSource() {
+  return new Promise(async (resolve) => {
+    openPicker();
+    pickerGrid.replaceChildren();
+    pickerGrid.hidden = false;
+    pickerContinue.hidden = true;
+    const finish = (value) => {
+      hidePicker();
+      resolve(value);
+    };
+    pickerCancel.onclick = () => finish(null);
+    let sources = [];
+    try {
+      sources = await desktop.listSources();
+    } catch (err) {
+      console.error(err);
+      showRoomError('Could not list windows.');
+      finish(null);
+      return;
+    }
+    if (!sources.length) {
+      showRoomError('No windows or screens found.');
+      finish(null);
+      return;
+    }
+    for (const source of sources) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'picker-item';
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = source.thumbnail;
+      const label = document.createElement('span');
+      label.textContent = source.kind === 'screen' ? `Screen · ${source.name}` : source.name;
+      button.append(img, label);
+      button.addEventListener('click', () => finish(source));
+      pickerGrid.append(button);
+    }
+  });
+}
+
+async function captureDesktopVideo(sourceId) {
+  await desktop.selectSource(sourceId);
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({
+      video: videoCaptureConstraints(),
+      audio: false,
+    });
+  } catch (err) {
+    if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) {
+      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    }
+    throw err;
+  }
+}
+
+async function startDesktopAudio(target) {
+  const started = await desktop.startLoopback(target);
+  if (!started || !started.ok) {
+    showRoomError(started && started.error ? started.error : 'Could not start native audio.');
+    return null;
+  }
+  const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+  await ctx.audioWorklet.addModule('/pcm-worklet.js');
+  if (ctx.state === 'suspended') await ctx.resume();
+  const node = new AudioWorkletNode(ctx, 'pcm-source', {
+    numberOfOutputs: 1,
+    outputChannelCount: [2],
+  });
+  const dest = ctx.createMediaStreamDestination();
+  node.connect(dest);
+  const unsub = desktop.onPcm((buffer) => {
+    node.port.postMessage(buffer, buffer instanceof ArrayBuffer ? [buffer] : []);
+  });
+  desktopAudio = { ctx, node, unsub };
+  const track = dest.stream.getAudioTracks()[0];
+  if (track) attachDisplayAudio(track);
+  return track;
+}
+
+function stopDesktopAudio() {
+  if (desktopAudio.unsub) desktopAudio.unsub();
+  if (desktop) desktop.stopLoopback();
+  if (desktopAudio.node) desktopAudio.node.disconnect();
+  if (desktopAudio.ctx) desktopAudio.ctx.close();
+  desktopAudio = { ctx: null, node: null, unsub: null };
+}
+
+async function startDesktopShare() {
+  const source = await pickDesktopSource();
+  if (!source) return;
+  if (localStream) stopShare();
+  const videoStream = await captureDesktopVideo(source.id);
+  const audioTrack = await startDesktopAudio(
+    source.kind === 'screen' ? { system: true } : { hwnd: source.hwnd }
+  );
+  const tracks = [...videoStream.getVideoTracks()];
+  if (audioTrack) tracks.push(audioTrack);
+  await attachLocalStream(new MediaStream(tracks));
 }
 
 async function startShare() {
   showRoomError('');
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { cursor: 'never' },
-      audio: true,
-    });
+    if (desktop) {
+      await startDesktopShare();
+      return;
+    }
+    const chosen = await pickShareQuality();
+    if (!chosen) return;
+    const stream = await captureDisplay();
     if (localStream) stopShare();
-    attachLocalStream(stream);
+    await attachLocalStream(stream);
   } catch (err) {
+    stopDesktopAudio();
     if (err && err.name === 'NotAllowedError') {
       showRoomError('Screen share was blocked.');
       return;
@@ -169,114 +438,225 @@ async function startShare() {
 }
 
 function stopShare() {
+  stopDesktopAudio();
+  hidePicker();
   if (localStream) {
     for (const track of localStream.getTracks()) track.stop();
     localStream = null;
   }
   localVideo.srcObject = null;
   setLocalSharing(false);
-  if (!pc) return;
-  for (const sender of pc.getSenders()) {
-    if (sender.track) pc.removeTrack(sender);
+  for (const peer of peers.values()) {
+    for (const sender of peer.pc.getSenders()) {
+      if (sender.track) peer.pc.removeTrack(sender);
+    }
   }
 }
 
-function clearRemote() {
-  if (remoteStream) {
-    for (const track of remoteStream.getTracks()) track.stop();
-  }
-  remoteStream = null;
-  remoteVideo.srcObject = null;
-  setRemoteSharing(false);
-  unmuteBtn.hidden = true;
+function remoteHasAudio(peer) {
+  return Boolean(
+    peer.stream && peer.stream.getAudioTracks().some((track) => track.readyState === 'live')
+  );
 }
 
-function watchRemoteTrack(track) {
+function bindRemoteVideo(peer) {
+  if (!peer.stream) {
+    peer.video.srcObject = null;
+    return;
+  }
+  peer.video.autoplay = true;
+  peer.video.playsInline = true;
+  peer.video.volume = 1;
+  peer.video.srcObject = new MediaStream(peer.stream.getTracks());
+}
+
+async function playRemote(peer) {
+  bindRemoteVideo(peer);
+  peer.video.muted = true;
+  try {
+    await peer.video.play();
+  } catch {
+    // Video can still paint; audio button is a fallback.
+  }
+  if (!remoteHasAudio(peer)) {
+    peer.video.muted = false;
+    peer.unmute.hidden = true;
+    return true;
+  }
+  if (!mediaUnlocked) {
+    peer.unmute.hidden = false;
+    return false;
+  }
+  peer.video.muted = false;
+  try {
+    await peer.video.play();
+    peer.unmute.hidden = true;
+    return true;
+  } catch {
+    peer.video.muted = true;
+    await peer.video.play().catch(() => {});
+    peer.unmute.hidden = false;
+    return false;
+  }
+}
+
+async function unlockRemoteAudio(peer) {
+  mediaUnlocked = true;
+  return playRemote(peer);
+}
+
+async function unlockMedia() {
+  mediaUnlocked = true;
+  for (const peer of peers.values()) {
+    if (peer.stream) playRemote(peer);
+  }
+}
+
+function watchRemoteTrack(peer, track) {
   const refresh = () => {
     const live = Boolean(
-      remoteStream && remoteStream.getTracks().some((t) => t.readyState === 'live')
+      peer.stream && peer.stream.getTracks().some((item) => item.readyState === 'live')
     );
-    setRemoteSharing(live);
+    setPaneLive(peer.pane, live, live ? 'Live' : 'Idle');
     if (!live) {
-      remoteVideo.srcObject = null;
-      unmuteBtn.hidden = true;
+      peer.video.srcObject = null;
+      peer.unmute.hidden = true;
     }
   };
   track.addEventListener('ended', refresh);
-  track.addEventListener('mute', refresh);
   track.addEventListener('unmute', () => {
-    if (remoteStream) remoteVideo.srcObject = remoteStream;
-    setRemoteSharing(true);
+    track.enabled = true;
+    bindRemoteVideo(peer);
+    setPaneLive(peer.pane, true, 'Live');
+    playRemote(peer);
   });
 }
 
-async function createPeerConnection() {
-  if (pc) return pc;
-  pc = new RTCPeerConnection({ iceServers });
-  makingOffer = false;
-  ignoreOffer = false;
-  isSettingRemoteAnswerPending = false;
+function createRemotePane(id) {
+  const pane = document.createElement('section');
+  pane.className = 'pane';
+  pane.dataset.live = 'false';
+  pane.dataset.slot = 'pip';
+  pane.dataset.peer = id;
+  pane.innerHTML = `
+    <header class="pane-meta">
+      <span class="pane-name">${peerLabel(id)}</span>
+      <span class="tally" aria-hidden="true"></span>
+      <span class="pane-state">Idle</span>
+    </header>
+    <video autoplay playsinline muted></video>
+    <p class="pane-empty">Not sharing</p>
+    <button class="unmute" hidden type="button">Click to hear them</button>
+  `;
+  const video = pane.querySelector('video');
+  const unmute = pane.querySelector('.unmute');
+  pane.addEventListener('click', (event) => onPaneClick(event, pane));
+  pipRail.append(pane);
+  return { pane, video, unmute };
+}
+
+function resetPeer(id, polite) {
+  removePeer(id);
+  return ensurePeer(id, polite);
+}
+
+function ensurePeer(id, polite) {
+  if (peers.has(id)) return peers.get(id);
+  const { pane, video, unmute } = createRemotePane(id);
+  const state = {
+    id,
+    polite,
+    pane,
+    video,
+    unmute,
+    pc: null,
+    stream: null,
+    makingOffer: false,
+    ignoreOffer: false,
+    isSettingRemoteAnswerPending: false,
+  };
+  const pc = new RTCPeerConnection({ iceServers });
+  state.pc = pc;
 
   pc.onicecandidate = ({ candidate }) => {
-    send({ type: 'signal', data: { type: 'ice', candidate } });
+    sendSignal(id, { type: 'ice', candidate });
   };
 
-  pc.ontrack = ({ track, streams }) => {
-    const inbound = streams[0] || remoteStream || new MediaStream();
-    if (!streams[0] && !inbound.getTracks().includes(track)) {
-      inbound.addTrack(track);
+  pc.ontrack = ({ track }) => {
+    track.enabled = true;
+    if (track.kind === 'audio') attachDisplayAudio(track);
+    if (!state.stream) state.stream = new MediaStream();
+    if (!state.stream.getTracks().includes(track)) state.stream.addTrack(track);
+    if (state.stream.getTracks().some((item) => item.readyState === 'live') && featured === 'you' && !isLive(paneYou)) {
+      featured = id;
     }
-    remoteStream = inbound;
-    remoteVideo.srcObject = inbound;
-    setRemoteSharing(true);
-    watchRemoteTrack(track);
-    remoteVideo.play().catch(() => {
-      unmuteBtn.hidden = false;
-    });
+    setPaneLive(pane, true, 'Live');
+    watchRemoteTrack(state, track);
+    playRemote(state);
   };
 
   pc.onnegotiationneeded = async () => {
     try {
-      makingOffer = true;
+      state.makingOffer = true;
       await pc.setLocalDescription();
-      send({ type: 'signal', data: { type: 'sdp', description: pc.localDescription } });
+      sendSignal(id, { type: 'sdp', description: pc.localDescription });
     } catch (err) {
       console.error(err);
       showRoomError('Could not negotiate the connection.');
     } finally {
-      makingOffer = false;
+      state.makingOffer = false;
     }
   };
 
   if (localStream) {
+    let hasVideo = false;
     for (const track of localStream.getTracks()) {
       pc.addTrack(track, localStream);
+      if (track.kind === 'video') hasVideo = true;
     }
+    if (hasVideo) applyVideoQuality(pc);
   }
 
-  return pc;
+  unmute.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const ok = await unlockRemoteAudio(state);
+    if (!ok && remoteHasAudio(state)) {
+      showRoomError('Browser blocked audio. Click the page and try again.');
+    }
+  });
+
+  peers.set(id, state);
+  setPeerStatus();
+  applyLayout();
+  return state;
 }
 
-async function closePeerConnection() {
-  if (!pc) {
-    clearRemote();
-    return;
-  }
-  pc.onicecandidate = null;
-  pc.ontrack = null;
-  pc.onnegotiationneeded = null;
-  pc.close();
-  pc = null;
-  clearRemote();
+function removePeer(id) {
+  const peer = peers.get(id);
+  if (!peer) return;
+  peer.pc.onicecandidate = null;
+  peer.pc.ontrack = null;
+  peer.pc.onnegotiationneeded = null;
+  peer.pc.close();
+  peer.pane.remove();
+  peers.delete(id);
+  if (featured === id) featured = 'you';
+  setPeerStatus();
+  applyLayout();
 }
 
-async function handleSignal(data) {
-  if (!pc) await createPeerConnection();
+function closeAllPeers() {
+  for (const id of [...peers.keys()]) removePeer(id);
+}
+
+async function handleSignal(from, data) {
+  const peer = ensurePeer(from, true);
+  const { pc } = peer;
   if (data.type === 'ice') {
     try {
       await pc.addIceCandidate(data.candidate);
     } catch (err) {
-      if (!ignoreOffer) console.error(err);
+      if (!peer.ignoreOffer) console.error(err);
     }
     return;
   }
@@ -284,55 +664,46 @@ async function handleSignal(data) {
 
   const description = data.description;
   const readyForOffer =
-    !makingOffer && (pc.signalingState === 'stable' || isSettingRemoteAnswerPending);
+    !peer.makingOffer && (pc.signalingState === 'stable' || peer.isSettingRemoteAnswerPending);
   const offerCollision = description.type === 'offer' && !readyForOffer;
-  ignoreOffer = !polite && offerCollision;
-  if (ignoreOffer) return;
+  peer.ignoreOffer = !peer.polite && offerCollision;
+  if (peer.ignoreOffer) return;
 
-  isSettingRemoteAnswerPending = description.type === 'answer';
+  peer.isSettingRemoteAnswerPending = description.type === 'answer';
   await pc.setRemoteDescription(description);
-  isSettingRemoteAnswerPending = false;
+  peer.isSettingRemoteAnswerPending = false;
 
   if (description.type === 'offer') {
     await pc.setLocalDescription();
-    send({ type: 'signal', data: { type: 'sdp', description: pc.localDescription } });
+    sendSignal(from, { type: 'sdp', description: pc.localDescription });
   }
 }
 
 async function handleRoomMessage(msg) {
-  if (msg.type === 'room-full') {
-    showView('blocked');
-    if (events) events.close();
-    return;
-  }
-
   if (msg.type === 'hello') {
-    polite = Boolean(msg.polite);
-    if (msg.peerPresent) {
-      setPeerStatus(true);
-      await createPeerConnection();
-    } else {
-      setPeerStatus(false);
+    myId = msg.id;
+    closeAllPeers();
+    for (const id of msg.peers || []) {
+      ensurePeer(id, true);
     }
+    setPeerStatus();
     return;
   }
 
   if (msg.type === 'peer-joined') {
-    setPeerStatus(true);
+    if (msg.id && msg.id !== myId) resetPeer(msg.id, false);
     showRoomError('');
-    await createPeerConnection();
     return;
   }
 
   if (msg.type === 'peer-left') {
-    setPeerStatus(false);
-    await closePeerConnection();
+    removePeer(msg.id);
     return;
   }
 
   if (msg.type === 'signal') {
     try {
-      await handleSignal(msg.data);
+      await handleSignal(msg.from, msg.data);
     } catch (err) {
       console.error(err);
       showRoomError('Signaling failed. Refresh and try again.');
@@ -361,13 +732,12 @@ function connectSocket() {
   });
 
   events.addEventListener('error', () => {
-    if (!blockedView.hidden) return;
     if (events && events.readyState === EventSource.CONNECTING && opened) {
       return;
     }
     if (events && events.readyState === EventSource.CLOSED) {
-      setPeerStatus(false);
-      closePeerConnection();
+      closeAllPeers();
+      setPeerStatus();
       showRoomError('Disconnected from the room.');
     }
   });
@@ -383,14 +753,14 @@ async function enterRoom() {
   }
   showView('room');
   setLocalSharing(Boolean(localStream));
-  setRemoteSharing(false);
-  setPeerStatus(false);
+  setPeerStatus();
   applyLayout();
   await connectSocket();
 }
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  unlockMedia();
   loginError.hidden = true;
   loginError.textContent = 'Wrong password';
   loginBtn.disabled = true;
@@ -415,22 +785,15 @@ loginForm.addEventListener('submit', async (event) => {
   }
 });
 
+document.addEventListener('click', () => {
+  if (!mediaUnlocked) unlockMedia();
+}, true);
+
 paneYou.addEventListener('click', (event) => onPaneClick(event, paneYou));
-paneThem.addEventListener('click', (event) => onPaneClick(event, paneThem));
 
 shareBtn.addEventListener('click', () => {
   if (localStream) stopShare();
   else startShare();
-});
-
-unmuteBtn.addEventListener('click', async () => {
-  try {
-    remoteVideo.muted = false;
-    await remoteVideo.play();
-    unmuteBtn.hidden = true;
-  } catch {
-    showRoomError('Browser blocked audio. Click the page and try again.');
-  }
 });
 
 async function boot() {

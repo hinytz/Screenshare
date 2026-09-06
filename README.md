@@ -1,6 +1,6 @@
 # Screenshare
 
-Private two-person WebRTC screenshare. Both people can share at the same time (screen + system/tab audio when the browser allows it). There is no microphone capture.
+Private WebRTC screenshare. Anyone with the password can join. Everyone can share at the same time (screen + system/tab audio when the browser allows it). There is no microphone capture.
 
 The server only serves the page and relays signaling. Video and audio go peer-to-peer. Google public STUN is used by default.
 
@@ -17,7 +17,7 @@ npm install
 npm start
 ```
 
-Open http://localhost:3000 in two browser profiles (or two browsers). Screen capture works on `localhost` without HTTPS.
+Open http://localhost:3000 in as many browsers as you want. Screen capture works on `localhost` without HTTPS.
 
 ## Dokploy
 
@@ -37,8 +37,24 @@ Signaling uses ordinary HTTP (`/api/stream` and `/api/signal`), so Cloudflare an
 
 Leave **Publish Directory** empty. This is a Node app, not a static site.
 
+## Windows app (window + app audio)
+
+The website still works in a browser. The optional Electron app can share a **window with that app’s sound** (Windows 10 2004+).
+
+```bash
+npm start
+cd desktop
+npm install
+npm run build:helper
+npm run dev
+```
+
+`npm run build:helper` needs the .NET 8 SDK. `npm run pack` builds the helper and an NSIS installer in `desktop/dist`.
+
+Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. The packaged app loads `https://screenshare.hinytz.com`. Override with `SCREENSHARE_URL`. Deploy the updated `public/` folder so the site matches the desktop capture path.
+
 ## Notes
 
-- Only two clients can sit in the room. A third login sees “Room is full.”
+- There is no join cap. Each browser connects mesh-style to the others.
 - Chrome and Edge on Windows can include tab or system audio from the share picker. Firefox and Safari often send video only.
 - Google STUN is enough for most home networks. Symmetric NAT or locked-down networks may need a TURN server in `ICE_SERVERS`.

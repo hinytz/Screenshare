@@ -169,14 +169,25 @@ button:disabled {
   cursor: default;
 }
 
-.pane[data-slot="pip"] {
+.pip-rail {
+  position: absolute;
   right: 0.9rem;
   bottom: 0.9rem;
   z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: calc(100% - 1.8rem);
+  overflow: auto;
+}
+
+.pane[data-slot="pip"] {
+  position: relative;
   width: min(22rem, 36vw);
   aspect-ratio: 16 / 10;
   border: 1px solid var(--line);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .pane[data-slot="pip"][data-live="false"] {
@@ -190,6 +201,8 @@ button:disabled {
   background: var(--bg);
 }
 
+.stage:fullscreen .pip-rail,
+.stage:-webkit-full-screen .pip-rail,
 .stage:fullscreen .pane[data-slot="pip"],
 .stage:-webkit-full-screen .pane[data-slot="pip"] {
   display: none;
@@ -352,10 +365,109 @@ button:disabled {
   color: var(--tally);
 }
 
+.picker {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgb(0 0 0 / 0.82);
+}
+
+.picker[hidden] {
+  display: none;
+}
+
+.picker-card {
+  width: min(52rem, 100%);
+  max-height: min(36rem, calc(100dvh - 2.5rem));
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1rem 1.1rem 1.15rem;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.quality-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.quality-btn {
+  padding: 0.45rem 0.65rem;
+  letter-spacing: 0.08em;
+}
+
+.quality-btn[aria-pressed="true"] {
+  border-color: var(--tally);
+  color: var(--tally);
+}
+
+.picker-continue {
+  width: 100%;
+  margin-top: 0.15rem;
+}
+
+.picker-continue[hidden] {
+  display: none;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  gap: 0.7rem;
+}
+
+.picker-grid[hidden] {
+  display: none;
+}
+
+.picker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.45rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  text-align: left;
+}
+
+.picker-item img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: #050505;
+}
+
+.picker-item span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 720px) {
-  .pane[data-slot="pip"] {
+  .pip-rail {
     right: 0.65rem;
     bottom: 0.65rem;
+  }
+
+  .pane[data-slot="pip"] {
     width: min(11.5rem, 46vw);
   }
 }
