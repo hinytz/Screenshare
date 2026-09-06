@@ -991,6 +991,10 @@ function floatDoc() {
   }
 }
 
+function floatCamKey(cam) {
+  return `${cam.peerId}:${cam.mid}`;
+}
+
 function syncFloatWindow() {
   const doc = floatDoc();
   if (!doc) return false;
@@ -998,16 +1002,31 @@ function syncFloatWindow() {
   const empty = doc.getElementById('empty');
   if (!strip || !empty) return false;
   const cams = collectRemoteCameras();
-  strip.replaceChildren();
   empty.hidden = cams.length > 0;
+  const existing = new Map();
+  for (const video of strip.querySelectorAll('video')) {
+    existing.set(video.dataset.camKey, video);
+  }
+  const keep = new Set();
   for (const cam of cams) {
-    const video = doc.createElement('video');
-    video.autoplay = true;
-    video.muted = true;
-    video.playsInline = true;
+    const key = floatCamKey(cam);
+    keep.add(key);
+    let video = existing.get(key);
+    const current = video && video.srcObject ? video.srcObject.getVideoTracks()[0] : null;
+    if (video && current === cam.track) continue;
+    if (!video) {
+      video = doc.createElement('video');
+      video.dataset.camKey = key;
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
+      strip.append(video);
+    }
     video.srcObject = new MediaStream([cam.track]);
     video.play().catch(() => {});
-    strip.append(video);
+  }
+  for (const [key, video] of existing) {
+    if (!keep.has(key)) video.remove();
   }
   return true;
 }
@@ -1029,7 +1048,10 @@ function openFloatWindow() {
     showRoomError('Could not open the camera window.');
     return;
   }
-  const onReady = () => syncFloatWindow();
+  let ready = false;
+  const onReady = () => {
+    ready = syncFloatWindow();
+  };
   try {
     floatWin.addEventListener('load', onReady);
   } catch {
@@ -1045,7 +1067,7 @@ function openFloatWindow() {
       setFloatOpen(false);
       return;
     }
-    syncFloatWindow();
+    if (!ready) ready = syncFloatWindow();
   }, 400);
   setFloatOpen(true);
 }
