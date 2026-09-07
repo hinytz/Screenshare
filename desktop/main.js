@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow, desktopCapturer, ipcMain, session } = require('electron');
+const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -238,6 +239,7 @@ function createWindow() {
         overrideBrowserWindowOptions: {
           frame: false,
           alwaysOnTop: true,
+          skipTaskbar: true,
           backgroundColor: '#000000',
           resizable: true,
           width: 800,
@@ -256,7 +258,66 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  return mainWindow.loadURL(startUrl());
+  mainWindow.webContents.on('did-create-window', (child, details) => {
+    let parsed;
+    try {
+      parsed = new URL(details.url);
+    } catch {
+      return;
+    }
+    if (parsed.pathname !== '/float.html') return;
+    child.setMenu(null);
+    child.setMenuBarVisibility(false);
+    child.setAutoHideMenuBar(true);
+    pinFloatWindow(child);
+    const pin = setInterval(() => pinFloatWindow(child), 750);
+    child.on('blur', () => pinFloatWindow(child));
+    child.on('closed', () => clearInterval(pin));
+  });
+
+  return mainWindow.loadURL(startUrl()).then(() => {
+    setupAutoUpdate();
+  });
+}
+
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('error', (err) => {
+    console.error('[update]', err);
+  });
+  autoUpdater.on('update-downloaded', () => {
+    const options = {
+      type: 'info',
+      buttons: ['Restart', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Update ready',
+      message: 'A new version of Screenshare is ready.',
+      detail: 'Restart now to update. Your current session will close.',
+    };
+    const prompt = mainWindow && !mainWindow.isDestroyed()
+      ? dialog.showMessageBox(mainWindow, options)
+      : dialog.showMessageBox(options);
+    prompt.then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[update] check failed', err);
+  });
+}
+
+function pinFloatWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  } catch {
+    // Windows ignores workspace flags.
+  }
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.moveTop();
 }
 
 function mapSource(source) {
@@ -348,8 +409,10 @@ function sendPcm(chunk) {
 }
 
 app.commandLine.appendSwitch('enable-features', 'WebRtcUseEchoCanceller3');
+app.commandLine.appendSwitch('disable-http-cache');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await session.defaultSession.clearCache().catch(() => {});
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === 'media' || permission === 'display-capture' || permission === 'fullscreen');
   });

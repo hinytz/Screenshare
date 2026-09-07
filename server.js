@@ -216,7 +216,42 @@ app.post('/api/signal', requireSession, (req, res) => {
   res.json({ ok: true });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+const publicDir = path.join(__dirname, 'public');
+
+function assetVersion(name) {
+  try {
+    return String(Math.trunc(fs.statSync(path.join(publicDir, name)).mtimeMs));
+  } catch {
+    return '0';
+  }
+}
+
+function sendHtml(res, fileName, replacements) {
+  let html = fs.readFileSync(path.join(publicDir, fileName), 'utf8');
+  for (const [from, to] of replacements) html = html.split(from).join(to);
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  res.type('html').send(html);
+}
+
+app.get(['/', '/index.html'], (_req, res) => {
+  const css = assetVersion('styles.css');
+  const js = assetVersion('app.js');
+  sendHtml(res, 'index.html', [
+    ['href="/styles.css"', `href="/styles.css?v=${css}"`],
+    ['src="/app.js"', `src="/app.js?v=${js}"`],
+  ]);
+});
+
+app.use(express.static(publicDir, {
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    const ext = path.extname(filePath);
+    if (ext === '.html' || ext === '.js' || ext === '.css') {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  },
+}));
 
 app.listen(PORT, () => {
   console.log(`Screenshare listening on ${PORT}`);

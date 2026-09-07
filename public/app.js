@@ -29,6 +29,7 @@ const QUALITY_PRESETS = {
   '720p30': { id: '720p30', label: '720p 30', width: 1280, height: 720, fps: 30, maxBitrate: 6_000_000 },
   '1080p30': { id: '1080p30', label: '1080p 30', width: 1920, height: 1080, fps: 30, maxBitrate: 6_000_000 },
   '720p60': { id: '720p60', label: '720p 60', width: 1280, height: 720, fps: 60, maxBitrate: 6_000_000 },
+  '1080p60': { id: '1080p60', label: '1080p 60', width: 1920, height: 1080, fps: 60, maxBitrate: 6_000_000 },
 };
 
 let shareQuality = '1080p30';
@@ -109,8 +110,8 @@ function applyLayout() {
   if (featured !== 'you' && !peers.has(featured)) featured = 'you';
   const liveRemote = [...peers.values()].find((peer) => isLive(peer.pane));
   if (featured === 'you' && !isLive(paneYou) && liveRemote) featured = liveRemote.id;
-  if (featured !== 'you' && peers.has(featured) && !isLive(peers.get(featured).pane) && isLive(paneYou)) {
-    featured = 'you';
+  if (featured !== 'you' && (!peers.has(featured) || !isLive(peers.get(featured).pane))) {
+    featured = isLive(paneYou) ? 'you' : liveRemote ? liveRemote.id : 'you';
   }
 
   for (const pane of allPanes()) {
@@ -182,7 +183,7 @@ async function toggleFullscreen(el) {
 }
 
 function onPaneClick(event, pane) {
-  if (event.target.closest('button')) return;
+  if (event.target.closest('button') || event.target.closest('.pane-controls')) return;
   if (!isLive(pane)) return;
   const peer = [...peers.values()].find((item) => item.pane === pane);
   if (peer) unlockRemoteAudio(peer);
@@ -227,22 +228,32 @@ function applyCaptureHint(track) {
   if (track.kind === 'video' && 'contentHint' in track) track.contentHint = 'detail';
 }
 
-const VIDEO_CODEC_PREF = ['video/av1', 'video/vp9', 'video/h264'];
+const SCREEN_CODEC_PREF = ['video/vp9', 'video/av1', 'video/h264'];
+const CAMERA_CODEC_PREF = ['video/av1', 'video/vp9', 'video/h264'];
+
+function orderVideoCodecs(pref) {
+  const caps = RTCRtpSender.getCapabilities('video');
+  if (!caps || !caps.codecs.length) return null;
+  const rank = (mime) => {
+    const index = pref.indexOf(String(mime).toLowerCase());
+    return index === -1 ? pref.length : index;
+  };
+  return [...caps.codecs].sort((a, b) => rank(a.mimeType) - rank(b.mimeType));
+}
 
 function preferVideoCodecs(pc) {
   if (!pc || typeof RTCRtpSender.getCapabilities !== 'function') return;
-  const caps = RTCRtpSender.getCapabilities('video');
-  if (!caps || !caps.codecs.length) return;
-  const rank = (mime) => {
-    const index = VIDEO_CODEC_PREF.indexOf(String(mime).toLowerCase());
-    return index === -1 ? VIDEO_CODEC_PREF.length : index;
-  };
-  const ordered = [...caps.codecs].sort((a, b) => rank(a.mimeType) - rank(b.mimeType));
+  const screenOrdered = orderVideoCodecs(SCREEN_CODEC_PREF);
+  const cameraOrdered = orderVideoCodecs(CAMERA_CODEC_PREF);
+  if (!screenOrdered) return;
+  const peer = peerByPc(pc);
   for (const transceiver of pc.getTransceivers()) {
+    if (transceiver.mid) continue;
     const kind = transceiver.receiver.track.kind || transceiver.sender.track?.kind;
     if (kind !== 'video') continue;
+    const camera = peer && transceiver.sender === peer.cameraSender;
     try {
-      transceiver.setCodecPreferences(ordered);
+      transceiver.setCodecPreferences(camera ? cameraOrdered : screenOrdered);
     } catch (err) {
       console.warn('Could not set video codec preferences', err);
     }
@@ -258,7 +269,7 @@ async function applyVideoQuality(pc) {
     if (peer && sender === peer.cameraSender) continue;
     try {
       const params = sender.getParameters();
-      params.degradationPreference = 'maintain-resolution';
+      params.degradationPreference = 'maintain-framerate';
       params.encodings = [
         {
           ...(params.encodings && params.encodings[0] ? params.encodings[0] : {}),
@@ -493,9 +504,12 @@ async function captureDesktopVideo(sourceId) {
   }
 }
 
+const SILENCE_MSG = 'No audio captured. Play sound in the selected window, or share the whole screen.';
+
 function stopDesktopEnergyWatch() {
   if (desktopAudio.energyTimer) {
     clearTimeout(desktopAudio.energyTimer);
+    clearInterval(desktopAudio.energyTimer);
     desktopAudio.energyTimer = null;
   }
 }
@@ -504,16 +518,35 @@ function startDesktopEnergyWatch() {
   stopDesktopEnergyWatch();
   let samples = 0;
   let sumSq = 0;
-  desktopAudio.energyTimer = setTimeout(() => {
-    desktopAudio.energyTimer = null;
-    const rms = samples ? Math.sqrt(sumSq / samples) : 0;
-    if (rms < 0.0005) {
-      showRoomError('No audio captured. Play sound in the selected window, or share the whole screen.');
+  let gotPcm = false;
+  let ticks = 0;
+
+  const rmsNow = () => (samples ? Math.sqrt(sumSq / samples) : 0);
+  const heardAudio = () => rmsNow() >= 0.0005;
+  const clearSilence = () => {
+    if (roomError.textContent === SILENCE_MSG) showRoomError('');
+  };
+
+  desktopAudio.energyTimer = setInterval(() => {
+    ticks += 1;
+    if (heardAudio()) {
+      clearSilence();
+      stopDesktopEnergyWatch();
+      return;
     }
-  }, 1000);
+    samples = 0;
+    sumSq = 0;
+    if (gotPcm || ticks >= 2) showRoomError(SILENCE_MSG);
+  }, 2000);
+
   return (floats) => {
+    gotPcm = true;
     for (let i = 0; i < floats.length; i++) sumSq += floats[i] * floats[i];
     samples += floats.length;
+    if (heardAudio()) {
+      clearSilence();
+      stopDesktopEnergyWatch();
+    }
   };
 }
 
@@ -647,6 +680,7 @@ function stopShare() {
     localStream = null;
   }
   localVideo.srcObject = null;
+  localVideo.load();
   setLocalSharing(false);
   for (const peer of peers.values()) {
     for (const kind of ['video', 'audio']) {
@@ -771,21 +805,62 @@ function remoteHasAudio(peer) {
 }
 
 function liveRemoteTracks(peer) {
-  return peer.stream ? peer.stream.getTracks().filter((track) => track.readyState === 'live') : [];
+  return peer.stream
+    ? peer.stream.getTracks().filter((track) => track.readyState === 'live' && !track.muted)
+    : [];
 }
 
 function livePaneTracks(peer) {
-  return liveRemoteTracks(peer);
+  return liveRemoteTracks(peer).filter((track) => track.kind === 'video');
+}
+
+function clearPaneVideo(video) {
+  if (!video) return;
+  video.srcObject = null;
+  try {
+    video.load();
+  } catch {
+    // ignore
+  }
 }
 
 function shouldTreatAsCamera(peer, mid, track) {
   if (!track || track.kind !== 'video') return false;
-  if (mid && peer.cameraMids.has(mid)) return true;
-  const paneVideos = peer.stream
-    ? peer.stream.getVideoTracks().filter((item) => item.readyState === 'live' && item !== track)
-    : [];
-  const camLive = [...peer.cameraTracks.values()].filter((item) => item.readyState === 'live').length;
-  return peer.cameraMids.size > 0 && paneVideos.length + camLive === 0;
+  return Boolean(mid && peer.cameraMids.has(mid));
+}
+
+function findCameraTrack(peer, mid) {
+  if (peer.pendingVideos.has(mid)) {
+    const pending = peer.pendingVideos.get(mid);
+    peer.pendingVideos.delete(mid);
+    return pending;
+  }
+  for (const [track, trackMid] of peer.trackMids) {
+    if (trackMid === mid && track.kind === 'video' && track.readyState === 'live') return track;
+  }
+  if (peer.pendingVideos.size === 1) {
+    const [key, track] = peer.pendingVideos.entries().next().value;
+    const trackMid = peer.trackMids.get(track);
+    if (track && track.kind === 'video' && (!trackMid || trackMid === mid)) {
+      peer.pendingVideos.delete(key);
+      return track;
+    }
+  }
+  return null;
+}
+
+function restoreOrphanScreen(peer, skipTrack) {
+  for (const [track, mid] of peer.trackMids) {
+    if (track === skipTrack) continue;
+    if (track.kind !== 'video' || track.readyState !== 'live') continue;
+    if (!mid || peer.cameraMids.has(mid)) continue;
+    if ([...peer.cameraTracks.values()].includes(track)) continue;
+    if (peer.stream && peer.stream.getVideoTracks().includes(track)) continue;
+    replaceRemoteTrack(peer, track);
+    watchRemoteTrack(peer, track);
+    setPaneLive(peer.pane, true, 'Live');
+    playRemote(peer);
+  }
 }
 
 function featuredScreenTrack() {
@@ -911,9 +986,10 @@ function addRemoteCamera(peer, mid, track) {
   setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
   if (live.length) bindRemoteVideo(peer);
   else {
-    peer.video.srcObject = null;
+    clearPaneVideo(peer.video);
     peer.unmute.hidden = true;
   }
+  restoreOrphanScreen(peer);
   refreshRemoteMedia();
 }
 
@@ -952,30 +1028,20 @@ function handleSourceSignal(peer, data) {
   else peer.cameraMids.delete(mid);
 
   if (!data.on) {
+    const stopped = peer.cameraTracks.get(mid);
     peer.cameraTracks.delete(mid);
     if (featuredView.kind === 'camera' && featuredView.peerId === peer.id && featuredView.mid === mid) {
       featuredView = { kind: 'pane' };
     }
+    restoreOrphanScreen(peer, stopped);
     refreshRemoteMedia();
     return;
   }
 
-  let found = peer.pendingVideos.get(mid) || null;
-  if (found) peer.pendingVideos.delete(mid);
-  if (!found) {
-    for (const [track, trackMid] of peer.trackMids) {
-      if (trackMid === mid && track.kind === 'video' && track.readyState === 'live') {
-        found = track;
-        break;
-      }
-    }
-  }
-  if (!found && peer.stream) {
-    const only = peer.stream.getVideoTracks().filter((track) => track.readyState === 'live');
-    if (only.length === 1) found = only[0];
-  }
+  const found = findCameraTrack(peer, mid);
   if (found) addRemoteCamera(peer, mid, found);
   promotePendingScreen(peer);
+  restoreOrphanScreen(peer);
 }
 
 function setFloatOpen(open) {
@@ -1082,12 +1148,56 @@ function replaceRemoteTrack(peer, track) {
   peer.stream.addTrack(track);
 }
 
-function bindRemoteVideo(peer) {
+function applyPeerVolume(peer) {
+  const vol = Number.isFinite(peer.volume) ? peer.volume : 1;
+  peer.volume = vol;
+  peer.video.volume = vol;
+  if (peer.volumeSlider) peer.volumeSlider.value = String(vol);
+}
+
+function bindRemoteVideo(peer, force) {
   const live = liveRemoteTracks(peer);
   peer.video.autoplay = true;
   peer.video.playsInline = true;
-  peer.video.volume = 1;
-  peer.video.srcObject = live.length ? new MediaStream(live) : null;
+  applyPeerVolume(peer);
+  if (!live.length) {
+    peer.boundTrackIds = '';
+    clearPaneVideo(peer.video);
+    return;
+  }
+  const ids = live.map((track) => track.id).sort().join(',');
+  if (!force && peer.boundTrackIds === ids && peer.video.srcObject) return;
+  peer.boundTrackIds = ids;
+  peer.video.srcObject = new MediaStream(live);
+}
+
+function reloadRemotePane(peer) {
+  bindRemoteVideo(peer, true);
+  unlockRemoteAudio(peer);
+}
+
+function watchPlaybackHealth(peer) {
+  if (peer.playWatch) return;
+  let lastFrames = -1;
+  let stale = 0;
+  peer.playWatch = setInterval(() => {
+    const video = peer.video;
+    if (!video || !isLive(peer.pane) || !video.srcObject) {
+      lastFrames = -1;
+      stale = 0;
+      return;
+    }
+    if (video.paused) video.play().catch(() => {});
+    const quality = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : null;
+    const frames = quality ? quality.totalVideoFrames : 0;
+    if (lastFrames >= 0 && frames === lastFrames) stale += 1;
+    else stale = 0;
+    lastFrames = frames;
+    if (stale >= 3) {
+      stale = 0;
+      reloadRemotePane(peer);
+    }
+  }, 1000);
 }
 
 async function playRemote(peer) {
@@ -1133,12 +1243,13 @@ async function unlockMedia() {
 }
 
 function watchRemoteTrack(peer, track) {
+  let muteTimer = null;
   const refresh = () => {
     if (peer.stream && track.readyState === 'ended') peer.stream.removeTrack(track);
     const live = livePaneTracks(peer);
     setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
     if (!live.length) {
-      peer.video.srcObject = null;
+      clearPaneVideo(peer.video);
       peer.unmute.hidden = true;
       if (featuredView.kind === 'camera') refreshRemoteMedia();
       return;
@@ -1147,11 +1258,21 @@ function watchRemoteTrack(peer, track) {
     if (featuredView.kind === 'camera') refreshRemoteMedia();
   };
   track.addEventListener('ended', refresh);
+  track.addEventListener('mute', () => {
+    if (muteTimer) clearTimeout(muteTimer);
+    muteTimer = setTimeout(() => {
+      muteTimer = null;
+      refresh();
+    }, 400);
+  });
   track.addEventListener('unmute', () => {
+    if (muteTimer) {
+      clearTimeout(muteTimer);
+      muteTimer = null;
+    }
     track.enabled = true;
-    bindRemoteVideo(peer);
-    setPaneLive(peer.pane, true, 'Live');
-    playRemote(peer);
+    refresh();
+    if (isLive(peer.pane)) playRemote(peer);
   });
 }
 
@@ -1168,14 +1289,42 @@ function createRemotePane(id) {
       <span class="pane-state">Idle</span>
     </header>
     <video autoplay playsinline muted></video>
-    <p class="pane-empty">Not sharing</p>
+    <div class="pane-empty">
+      <img src="/bearzzz.png" alt="" />
+      <span>Not sharing</span>
+    </div>
     <button class="unmute" hidden type="button">Click to hear them</button>
+    <div class="pane-controls">
+      <button class="pane-reload" type="button" aria-label="Reload stream">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5.5A6.5 6.5 0 1 1 5.7 8.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M5 4.5v4.2h4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <input class="pane-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+    </div>
   `;
   const video = pane.querySelector('video');
   const unmute = pane.querySelector('.unmute');
+  const reloadBtn = pane.querySelector('.pane-reload');
+  const volumeSlider = pane.querySelector('.pane-volume');
+  reloadBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const peer = peers.get(id);
+    if (peer) reloadRemotePane(peer);
+  });
+  volumeSlider.addEventListener('pointerdown', (event) => event.stopPropagation());
+  volumeSlider.addEventListener('click', (event) => event.stopPropagation());
+  volumeSlider.addEventListener('input', () => {
+    const peer = peers.get(id);
+    if (!peer) return;
+    peer.volume = Number(volumeSlider.value);
+    applyPeerVolume(peer);
+    unlockRemoteAudio(peer);
+  });
   pane.addEventListener('click', (event) => onPaneClick(event, pane));
   pipRail.append(pane);
-  return { pane, video, unmute };
+  return { pane, video, unmute, volumeSlider };
 }
 
 function resetPeer(id, polite) {
@@ -1185,13 +1334,17 @@ function resetPeer(id, polite) {
 
 function ensurePeer(id, polite) {
   if (peers.has(id)) return peers.get(id);
-  const { pane, video, unmute } = createRemotePane(id);
+  const { pane, video, unmute, volumeSlider } = createRemotePane(id);
   const state = {
     id,
     polite,
     pane,
     video,
     unmute,
+    volumeSlider,
+    volume: 1,
+    boundTrackIds: '',
+    playWatch: null,
     pc: null,
     stream: null,
     makingOffer: false,
@@ -1222,7 +1375,7 @@ function ensurePeer(id, polite) {
     }
     if (track.kind === 'video') {
       const paneVideo = state.stream
-        ? state.stream.getVideoTracks().find((item) => item.readyState === 'live' && item !== track)
+        ? state.stream.getVideoTracks().find((item) => item.readyState === 'live' && !item.muted && item !== track)
         : null;
       if (paneVideo) {
         state.pendingVideos.set(mid || track.id, track);
@@ -1230,12 +1383,11 @@ function ensurePeer(id, polite) {
       }
     }
     replaceRemoteTrack(state, track);
-    if (livePaneTracks(state).length && featured === 'you' && !isLive(paneYou)) {
-      featured = id;
-    }
-    setPaneLive(pane, true, 'Live');
     watchRemoteTrack(state, track);
-    playRemote(state);
+    const live = livePaneTracks(state);
+    if (live.length && featured === 'you' && !isLive(paneYou)) featured = id;
+    setPaneLive(pane, live.length > 0, live.length ? 'Live' : 'Idle');
+    if (live.length || track.kind === 'audio') playRemote(state);
   };
 
   pc.onnegotiationneeded = async () => {
@@ -1262,6 +1414,7 @@ function ensurePeer(id, polite) {
   });
 
   peers.set(id, state);
+  watchPlaybackHealth(state);
 
   if (localStream) {
     let hasVideo = false;
@@ -1281,6 +1434,10 @@ function ensurePeer(id, polite) {
 function removePeer(id) {
   const peer = peers.get(id);
   if (!peer) return;
+  if (peer.playWatch) {
+    clearInterval(peer.playWatch);
+    peer.playWatch = null;
+  }
   peer.pc.onicecandidate = null;
   peer.pc.ontrack = null;
   peer.pc.onnegotiationneeded = null;
