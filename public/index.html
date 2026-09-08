@@ -15,8 +15,25 @@
   </head>
   <body>
     <div id="login" class="view">
-      <form id="login-form" class="login-card" autocomplete="current-password">
+      <form id="login-form" class="login-card" autocomplete="off">
         <p class="wordmark">Screenshare</p>
+        <div class="mode-toggle" role="tablist" aria-label="Room action">
+          <button type="button" id="mode-join" role="tab" aria-selected="true">Join</button>
+          <button type="button" id="mode-create" role="tab" aria-selected="false">Create</button>
+        </div>
+        <label class="field">
+          <span>Room</span>
+          <input
+            id="room-name"
+            name="room"
+            type="text"
+            required
+            minlength="2"
+            maxlength="32"
+            autocomplete="off"
+            autofocus
+          />
+        </label>
         <label class="field">
           <span>Password</span>
           <input
@@ -24,12 +41,23 @@
             name="password"
             type="password"
             required
-            autofocus
             autocomplete="current-password"
           />
         </label>
+        <label class="field">
+          <span>Username</span>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            required
+            minlength="2"
+            maxlength="32"
+            autocomplete="nickname"
+          />
+        </label>
         <button type="submit" id="login-btn">Enter</button>
-        <p id="login-error" class="error" hidden>Wrong password</p>
+        <p id="login-error" class="error" hidden></p>
       </form>
     </div>
 
@@ -37,7 +65,7 @@
       <main class="stage">
         <section class="pane" id="pane-you" data-live="false" data-slot="pip">
           <header class="pane-meta">
-            <span class="pane-name">You</span>
+            <span class="pane-name" id="you-name">You</span>
             <span class="tally" aria-hidden="true"></span>
             <span class="pane-state">Idle</span>
           </header>
@@ -52,9 +80,42 @@
         <div id="cam-stack" class="cam-stack"></div>
       </main>
       <footer class="bar">
-        <p id="peer-status" class="status">Waiting</p>
+        <div class="people-wrap">
+          <button id="peer-status" type="button" class="status" aria-expanded="false" aria-controls="people-panel">1 / 5</button>
+          <div id="people-panel" class="people-panel" hidden>
+            <p class="people-heading">People</p>
+            <ul id="people-list"></ul>
+          </div>
+        </div>
+        <div class="mic-wrap">
+          <button id="mic-btn" type="button" aria-label="Microphone" aria-expanded="false" aria-controls="mic-panel" data-live="false" data-muted="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3.2A2.8 2.8 0 0 0 9.2 6v5.2a2.8 2.8 0 1 0 5.6 0V6A2.8 2.8 0 0 0 12 3.2Zm-6.2 8.3a.9.9 0 0 1 .9.9 5.3 5.3 0 0 0 10.6 0 .9.9 0 1 1 1.8 0 7.1 7.1 0 0 1-6.2 7v1.7h2.4a.9.9 0 1 1 0 1.8H9.7a.9.9 0 1 1 0-1.8h2.4v-1.7a7.1 7.1 0 0 1-6.2-7 .9.9 0 0 1 .9-.9Z"/>
+              <path class="mic-slash" d="M5.2 5.2l13.6 13.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <div id="mic-panel" class="mic-panel" hidden>
+            <button id="mic-toggle" type="button">Unmute</button>
+            <label class="field">
+              <span>Microphone</span>
+              <select id="mic-device"></select>
+            </label>
+            <label class="field">
+              <span>Input volume</span>
+              <input id="mic-gain" type="range" min="0" max="200" value="100" />
+            </label>
+            <label class="field">
+              <span>Voice activity</span>
+              <div class="vad-meter">
+                <span id="mic-level" class="vad-level"></span>
+                <input id="mic-vad" type="range" min="0" max="100" value="4" />
+              </div>
+            </label>
+          </div>
+        </div>
         <p id="room-error" class="error bar-error" hidden></p>
         <div class="bar-actions">
+          <button id="leave-btn" type="button">Leave</button>
           <button id="float-btn" type="button" hidden>Pop-out cameras</button>
           <button id="change-btn" type="button" hidden>Change screen</button>
           <button id="camera-btn" type="button" aria-label="Camera" aria-pressed="false" data-live="false">
@@ -72,8 +133,13 @@
             <button id="picker-cancel" type="button">Cancel</button>
           </header>
           <div id="quality-row" class="quality-row" role="group" aria-label="Stream quality"></div>
+          <div id="picker-tabs" class="picker-tabs" hidden role="tablist" aria-label="Share source">
+            <button id="picker-tab-windows" type="button" role="tab" aria-selected="true">Windows</button>
+            <button id="picker-tab-browsers" type="button" role="tab" aria-selected="false">Browsers</button>
+          </div>
           <video id="camera-preview" class="camera-preview" autoplay playsinline muted hidden></video>
           <div id="picker-grid" class="picker-grid"></div>
+          <p id="picker-empty" class="picker-empty" hidden></p>
           <button id="picker-continue" class="picker-continue" type="button" hidden>Continue</button>
         </div>
       </div>

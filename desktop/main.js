@@ -320,13 +320,66 @@ function pinFloatWindow(win) {
   win.moveTop();
 }
 
-function mapSource(source) {
+function detectBrowser(title, image) {
+  const exe = String(image || '')
+    .toLowerCase()
+    .replace(/\.exe$/i, '');
+  const fromExe = {
+    chrome: 'Chrome',
+    chromium: 'Chromium',
+    msedge: 'Edge',
+    firefox: 'Firefox',
+    waterfox: 'Firefox',
+    librewolf: 'Firefox',
+    floorp: 'Firefox',
+    brave: 'Brave',
+    opera: 'Opera',
+    vivaldi: 'Vivaldi',
+    arc: 'Arc',
+    iexplore: 'Internet Explorer',
+  }[exe];
+  if (fromExe) return fromExe;
+  const name = String(title || '');
+  if (/google chrome/i.test(name)) return 'Chrome';
+  if (/microsoft edge/i.test(name)) return 'Edge';
+  if (/mozilla firefox/i.test(name)) return 'Firefox';
+  if (/(?:^|\s[—\-]\s)Brave$/i.test(name)) return 'Brave';
+  if (/(?:^|\s[—\-]\s)Opera(?:\sGX)?$/i.test(name)) return 'Opera';
+  if (/vivaldi/i.test(name)) return 'Vivaldi';
+  if (/(?:^|\s[—\-]\s)Arc$/i.test(name)) return 'Arc';
+  if (/chromium/i.test(name)) return 'Chromium';
+  return '';
+}
+
+function mapSource(source, processes) {
+  const hwnd = parseHwnd(source.id);
+  let image = '';
+  if (hwnd && nativeCapture && typeof nativeCapture.getPidFromWindowHandle === 'function') {
+    try {
+      const pid = nativeCapture.getPidFromWindowHandle(hwnd);
+      const entry = pid ? processes.get(Number(pid)) : null;
+      if (entry && entry.name) image = entry.name;
+    } catch {
+      // title fallback
+    }
+  }
+  const browser = detectBrowser(source.name, image);
+  const isScreen = source.id.startsWith('screen:');
+  let icon = '';
+  try {
+    if (source.appIcon) icon = source.appIcon.toDataURL();
+  } catch {
+    icon = '';
+  }
   return {
     id: source.id,
     name: source.name,
-    kind: source.id.startsWith('screen:') ? 'screen' : 'window',
-    hwnd: parseHwnd(source.id),
+    kind: isScreen ? 'screen' : 'window',
+    hwnd,
     thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : '',
+    icon,
+    app: browser || (image ? String(image).replace(/\.exe$/i, '') : ''),
+    group: isScreen ? 'window' : browser ? 'browser' : 'window',
   };
 }
 
@@ -336,7 +389,11 @@ async function listSources() {
     thumbnailSize: { width: 320, height: 180 },
     fetchWindowIcons: true,
   });
-  return sources.map(mapSource);
+  const processes =
+    nativeCapture && typeof nativeCapture.getPidFromWindowHandle === 'function'
+      ? snapshotProcesses()
+      : new Map();
+  return sources.map((source) => mapSource(source, processes));
 }
 
 function closePicker(result) {

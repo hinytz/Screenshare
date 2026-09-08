@@ -1,18 +1,33 @@
 const loginView = document.getElementById('login');
 const roomView = document.getElementById('room');
 const loginForm = document.getElementById('login-form');
+const roomNameInput = document.getElementById('room-name');
 const passwordInput = document.getElementById('password');
+const usernameInput = document.getElementById('username');
 const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
+const modeJoin = document.getElementById('mode-join');
+const modeCreate = document.getElementById('mode-create');
 const stage = document.querySelector('.stage');
 const pipRail = document.getElementById('pip-rail');
 const localVideo = document.getElementById('local-video');
 const paneYou = document.getElementById('pane-you');
+const youName = document.getElementById('you-name');
 const shareBtn = document.getElementById('share-btn');
 const changeBtn = document.getElementById('change-btn');
 const cameraBtn = document.getElementById('camera-btn');
 const floatBtn = document.getElementById('float-btn');
+const leaveBtn = document.getElementById('leave-btn');
 const peerStatus = document.getElementById('peer-status');
+const peoplePanel = document.getElementById('people-panel');
+const peopleList = document.getElementById('people-list');
+const micBtn = document.getElementById('mic-btn');
+const micPanel = document.getElementById('mic-panel');
+const micToggle = document.getElementById('mic-toggle');
+const micDevice = document.getElementById('mic-device');
+const micGainSlider = document.getElementById('mic-gain');
+const micVadSlider = document.getElementById('mic-vad');
+const micLevel = document.getElementById('mic-level');
 const roomError = document.getElementById('room-error');
 const picker = document.getElementById('picker');
 const pickerTitle = document.getElementById('picker-title');
@@ -20,6 +35,10 @@ const pickerGrid = document.getElementById('picker-grid');
 const pickerCancel = document.getElementById('picker-cancel');
 const qualityRow = document.getElementById('quality-row');
 const pickerContinue = document.getElementById('picker-continue');
+const pickerTabs = document.getElementById('picker-tabs');
+const pickerTabWindows = document.getElementById('picker-tab-windows');
+const pickerTabBrowsers = document.getElementById('picker-tab-browsers');
+const pickerEmpty = document.getElementById('picker-empty');
 const cameraPreview = document.getElementById('camera-preview');
 const camFeature = document.getElementById('cam-feature');
 const camStack = document.getElementById('cam-stack');
@@ -34,11 +53,21 @@ const QUALITY_PRESETS = {
 
 let shareQuality = '1080p30';
 let replacingShare = false;
+let lastDesktopSource = null;
+let lastDesktopCaptureAt = 0;
+let shareEndTimer = null;
 
 const DEFAULT_ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
+
+const ROOM_CACHE_KEY = 'screenshare.rooms';
+const MIC_CACHE_KEY = 'screenshare.mic';
+const MAX_PEOPLE = 5;
+const MIC_BITRATE = 64_000;
+const VAD_HANG_MS = 160;
+const PERSON_MIC_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2A2.8 2.8 0 0 0 9.2 6v5.2a2.8 2.8 0 1 0 5.6 0V6A2.8 2.8 0 0 0 12 3.2Zm-6.2 8.3a.9.9 0 0 1 .9.9 5.3 5.3 0 0 0 10.6 0 .9.9 0 1 1 1.8 0 7.1 7.1 0 0 1-6.2 7v1.7h2.4a.9.9 0 1 1 0 1.8H9.7a.9.9 0 1 1 0-1.8h2.4v-1.7a7.1 7.1 0 0 1-6.2-7 .9.9 0 0 1 .9-.9Z"/><path class="mic-slash" d="M5.2 5.2l13.6 13.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
 
 let iceServers = DEFAULT_ICE;
 let events = null;
@@ -46,6 +75,9 @@ let reconnectTimer = null;
 let socketGen = 0;
 let roomQueue = Promise.resolve();
 let myId = null;
+let myName = '';
+let homeMode = 'join';
+let leavingRoom = false;
 let featured = 'you';
 let featuredView = { kind: 'pane' };
 let localStream = null;
@@ -54,6 +86,24 @@ let cameraPreviewStream = null;
 let floatWin = null;
 let floatPoll = null;
 let mediaUnlocked = false;
+let micUnmuted = false;
+let micSpeaking = false;
+let micHangUntil = 0;
+let micRawStream = null;
+let micProcessedStream = null;
+let micCtx = null;
+let micSource = null;
+let micInputGain = null;
+let micAnalyser = null;
+let micGate = null;
+let micDest = null;
+let micSink = null;
+let micVadRaf = 0;
+let micStarting = false;
+let micDenied = false;
+let voiceCtx = null;
+let voicePeerId = null;
+let micSettings = { deviceId: '', gain: 1, threshold: 0.04 };
 const peers = new Map();
 const CAMERA_CONSTRAINTS = {
   video: {
@@ -78,7 +128,188 @@ function showView(view) {
 }
 
 function peerLabel(id) {
+  const peer = peers.get(id);
+  if (peer && peer.name) return peer.name;
   return `Peer ${String(id).slice(0, 4)}`;
+}
+
+function setYouName(name) {
+  myName = name || '';
+  youName.textContent = myName || 'You';
+}
+
+function setHomeMode(mode) {
+  homeMode = mode === 'create' ? 'create' : 'join';
+  modeJoin.setAttribute('aria-selected', homeMode === 'join' ? 'true' : 'false');
+  modeCreate.setAttribute('aria-selected', homeMode === 'create' ? 'true' : 'false');
+  loginBtn.textContent = homeMode === 'create' ? 'Create' : 'Enter';
+}
+
+function loadCachedRoom() {
+  try {
+    const raw = localStorage.getItem(ROOM_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data.name !== 'string' || typeof data.password !== 'string') return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function cachePermanentRoom(name, password) {
+  localStorage.setItem(ROOM_CACHE_KEY, JSON.stringify({ name, password }));
+}
+
+function prefillJoinForm() {
+  const cached = loadCachedRoom();
+  if (!cached) return;
+  roomNameInput.value = cached.name;
+  passwordInput.value = cached.password;
+}
+
+function renderPeopleList() {
+  const rows = [];
+  if (myName) rows.push({ id: 'self', name: myName, self: true });
+  for (const peer of peers.values()) {
+    rows.push({ id: peer.id, name: peer.name || peerLabel(peer.id), self: false, peer });
+  }
+  const openId = voicePeerId;
+  peopleList.replaceChildren(
+    ...rows.map((item) => {
+      const li = document.createElement('li');
+      li.dataset.self = item.self ? 'true' : 'false';
+      if (!item.self) li.dataset.peer = item.id;
+
+      const mic = document.createElement('button');
+      mic.type = 'button';
+      mic.className = 'person-mic';
+      mic.innerHTML = PERSON_MIC_SVG;
+      mic.setAttribute('aria-label', item.self ? 'Your microphone' : `Voice for ${item.name}`);
+
+      const name = document.createElement('span');
+      name.className = 'person-name';
+      name.textContent = item.self ? `${item.name} (you)` : item.name;
+
+      li.append(mic, name);
+
+      if (item.self) {
+        mic.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (micBtn.disabled) return;
+          setMicOpen(micPanel.hidden);
+        });
+      } else {
+        const pop = document.createElement('div');
+        pop.className = 'voice-pop';
+        pop.hidden = openId !== item.id;
+        const muteBtn = document.createElement('button');
+        muteBtn.type = 'button';
+        muteBtn.className = 'voice-mute';
+        const vol = document.createElement('input');
+        vol.type = 'range';
+        vol.min = '0';
+        vol.max = '200';
+        vol.value = String(Math.round((item.peer.voiceVolume ?? 1) * 100));
+        vol.setAttribute('aria-label', `Volume for ${item.name}`);
+        muteBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          item.peer.voiceMuted = !item.peer.voiceMuted;
+          applyVoiceGain(item.peer);
+          refreshPeopleVoice();
+        });
+        vol.addEventListener('pointerdown', (event) => event.stopPropagation());
+        vol.addEventListener('click', (event) => event.stopPropagation());
+        vol.addEventListener('input', () => {
+          item.peer.voiceVolume = Number(vol.value) / 100;
+          if (item.peer.voiceVolume > 0) item.peer.voiceMuted = false;
+          applyVoiceGain(item.peer);
+          refreshPeopleVoice();
+        });
+        pop.append(muteBtn, vol);
+        li.append(pop);
+        mic.addEventListener('click', (event) => {
+          event.stopPropagation();
+          voicePeerId = voicePeerId === item.id ? null : item.id;
+          refreshPeopleVoice();
+        });
+      }
+      return li;
+    })
+  );
+  refreshPeopleVoice();
+}
+
+function refreshPeopleVoice() {
+  for (const li of peopleList.querySelectorAll('li')) {
+    const mic = li.querySelector('.person-mic');
+    const pop = li.querySelector('.voice-pop');
+    const muteBtn = li.querySelector('.voice-mute');
+    if (li.dataset.self === 'true') {
+      if (!mic) continue;
+      mic.dataset.muted = micUnmuted ? 'false' : 'true';
+      mic.dataset.speaking = micSpeaking ? 'true' : 'false';
+      continue;
+    }
+    const peer = peers.get(li.dataset.peer);
+    if (!peer || !mic) continue;
+    mic.dataset.muted = peer.voiceMuted ? 'true' : 'false';
+    mic.dataset.speaking = peer.voiceSpeaking && !peer.voiceMuted ? 'true' : 'false';
+    if (pop) pop.hidden = voicePeerId !== peer.id;
+    if (muteBtn) muteBtn.textContent = peer.voiceMuted ? 'Unmute' : 'Mute';
+  }
+}
+
+function loadMicSettings() {
+  try {
+    const raw = localStorage.getItem(MIC_CACHE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return;
+    if (typeof data.deviceId === 'string') micSettings.deviceId = data.deviceId;
+    if (Number.isFinite(data.gain)) micSettings.gain = Math.min(2, Math.max(0, data.gain));
+    if (Number.isFinite(data.threshold)) {
+      const threshold = Math.min(1, Math.max(0, data.threshold));
+      micSettings.threshold = threshold === 0.12 ? 0.04 : threshold;
+    }
+  } catch {
+    // keep defaults
+  }
+}
+
+function saveMicSettings() {
+  localStorage.setItem(MIC_CACHE_KEY, JSON.stringify(micSettings));
+}
+
+function syncMicControls() {
+  if (micGainSlider) micGainSlider.value = String(Math.round(micSettings.gain * 100));
+  if (micVadSlider) micVadSlider.value = String(Math.round(micSettings.threshold * 100));
+  if (micToggle) micToggle.textContent = micUnmuted ? 'Mute' : 'Unmute';
+  if (micDevice && micSettings.deviceId) micDevice.value = micSettings.deviceId;
+}
+
+function setMicLive(live) {
+  micBtn.dataset.live = live ? 'true' : 'false';
+  micBtn.dataset.muted = live ? 'false' : 'true';
+  micBtn.setAttribute('aria-pressed', live ? 'true' : 'false');
+}
+
+function setMicOpen(open) {
+  if (open) setPeopleOpen(false);
+  voicePeerId = null;
+  refreshPeopleVoice();
+  micPanel.hidden = !open;
+  micBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function setPeopleOpen(open) {
+  if (open) setMicOpen(false);
+  peoplePanel.hidden = !open;
+  peerStatus.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (!open) {
+    voicePeerId = null;
+    refreshPeopleVoice();
+  }
 }
 
 function isLive(pane) {
@@ -129,14 +360,10 @@ function applyLayout() {
 }
 
 function setPeerStatus() {
-  const count = peers.size;
-  if (!count) {
-    peerStatus.textContent = 'Waiting';
-    peerStatus.dataset.state = 'waiting';
-    return;
-  }
-  peerStatus.textContent = count === 1 ? '1 connected' : `${count} connected`;
-  peerStatus.dataset.state = 'connected';
+  const count = (myName ? 1 : 0) + peers.size;
+  peerStatus.textContent = `${count} / ${MAX_PEOPLE}`;
+  peerStatus.dataset.state = count > 1 ? 'connected' : 'waiting';
+  renderPeopleList();
 }
 
 function showRoomError(message) {
@@ -324,6 +551,419 @@ async function applyCameraQuality(peer) {
   }
 }
 
+function micAudioConstraints(deviceId) {
+  const audio = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  };
+  if (deviceId) audio.deviceId = { exact: deviceId };
+  return { audio, video: false };
+}
+
+function micTrack() {
+  return micProcessedStream
+    ? micProcessedStream.getAudioTracks().find((track) => track.readyState === 'live') || null
+    : null;
+}
+
+function micRms() {
+  if (!micAnalyser) return 0;
+  const buf = new Float32Array(micAnalyser.fftSize);
+  micAnalyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (const sample of buf) sum += sample * sample;
+  return Math.sqrt(sum / buf.length);
+}
+
+function updateVadMeter(level) {
+  if (!micLevel) return;
+  micLevel.style.width = `${Math.min(100, Math.round(level * 400))}%`;
+}
+
+function applyMicGate() {
+  if (!micGate) return;
+  const now = performance.now();
+  const open = micUnmuted && now < micHangUntil;
+  micGate.gain.value = open ? 1 : 0;
+  if (micSpeaking !== open) {
+    micSpeaking = open;
+    refreshPeopleVoice();
+  }
+}
+
+function tickMicVad() {
+  micVadRaf = requestAnimationFrame(tickMicVad);
+  if (!micAnalyser) return;
+  const level = micRms();
+  updateVadMeter(level);
+  if (micUnmuted && level >= micSettings.threshold) micHangUntil = performance.now() + VAD_HANG_MS;
+  applyMicGate();
+}
+
+function keepMicSinkAlive() {
+  if (!micProcessedStream) return;
+  if (!micSink) {
+    micSink = new Audio();
+    micSink.muted = true;
+    micSink.autoplay = true;
+    micSink.playsInline = true;
+  }
+  if (micSink.srcObject !== micProcessedStream) micSink.srcObject = micProcessedStream;
+  micSink.play().catch(() => {});
+}
+
+function ensureMicGraph() {
+  if (micCtx) return;
+  micCtx = new AudioContext({ latencyHint: 'interactive' });
+  micInputGain = micCtx.createGain();
+  micInputGain.gain.value = micSettings.gain;
+  micAnalyser = micCtx.createAnalyser();
+  micAnalyser.fftSize = 1024;
+  micAnalyser.smoothingTimeConstant = 0.3;
+  micGate = micCtx.createGain();
+  micGate.gain.value = 0;
+  micDest = micCtx.createMediaStreamDestination();
+  micInputGain.connect(micAnalyser);
+  micAnalyser.connect(micGate);
+  micGate.connect(micDest);
+  micProcessedStream = micDest.stream;
+  const sent = micTrack();
+  if (sent && 'contentHint' in sent) sent.contentHint = 'speech';
+  keepMicSinkAlive();
+  if (!micVadRaf) micVadRaf = requestAnimationFrame(tickMicVad);
+}
+
+function connectMicSource(stream) {
+  if (micSource) {
+    try { micSource.disconnect(); } catch { /* already gone */ }
+    micSource = null;
+  }
+  if (micRawStream && micRawStream !== stream) {
+    for (const track of micRawStream.getTracks()) track.stop();
+  }
+  micRawStream = stream;
+  const raw = stream.getAudioTracks()[0];
+  if (raw && 'contentHint' in raw) raw.contentHint = 'speech';
+  micSource = micCtx.createMediaStreamSource(stream);
+  micSource.connect(micInputGain);
+}
+
+function preferMicCodecs(pc) {
+  if (!pc || typeof RTCRtpSender.getCapabilities !== 'function') return;
+  const caps = RTCRtpSender.getCapabilities('audio');
+  if (!caps || !caps.codecs.length) return;
+  const opus = [];
+  const rest = [];
+  for (const codec of caps.codecs) {
+    if (String(codec.mimeType).toLowerCase() === 'audio/opus') opus.push(codec);
+    else rest.push(codec);
+  }
+  const ordered = [...opus, ...rest];
+  const peer = peerByPc(pc);
+  for (const transceiver of pc.getTransceivers()) {
+    if (!peer || transceiver.sender !== peer.micSender) continue;
+    try {
+      transceiver.setCodecPreferences(ordered);
+    } catch (err) {
+      console.warn('Could not set mic codec preferences', err);
+    }
+  }
+}
+
+async function applyMicQuality(peer) {
+  const sender = peer && peer.micSender;
+  if (!sender || !sender.track) return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) return;
+    params.encodings[0].maxBitrate = MIC_BITRATE;
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn('Could not apply mic quality', err);
+  }
+}
+
+function signalMicToPeer(peer, on) {
+  const sender = peer.micSender;
+  if (!sender) return;
+  const transceiver = peer.pc.getTransceivers().find((item) => item.sender === sender);
+  if (!transceiver || transceiver.mid == null) return;
+  sendSignal(peer.id, { type: 'source', role: 'mic', mid: String(transceiver.mid), on });
+}
+
+async function publishMicToPeer(peer) {
+  const track = micTrack();
+  if (!track) return;
+  if (peer.micSender && peer.pc.getSenders().includes(peer.micSender)) {
+    await peer.micSender.replaceTrack(track);
+  } else {
+    peer.micSender = peer.pc.addTrack(track, micProcessedStream);
+  }
+  preferMicCodecs(peer.pc);
+  await applyMicQuality(peer);
+  signalMicToPeer(peer, true);
+}
+
+async function fillMicDevices() {
+  if (!micDevice) return;
+  let devices = [];
+  try {
+    devices = (await navigator.mediaDevices.enumerateDevices()).filter((item) => item.kind === 'audioinput');
+  } catch {
+    devices = [];
+  }
+  const current = micSettings.deviceId;
+  micDevice.replaceChildren(
+    ...devices.map((item, index) => {
+      const option = document.createElement('option');
+      option.value = item.deviceId;
+      option.textContent = item.label || `Microphone ${index + 1}`;
+      return option;
+    })
+  );
+  if (current && [...micDevice.options].some((option) => option.value === current)) {
+    micDevice.value = current;
+  } else if (micDevice.options.length) {
+    micDevice.selectedIndex = 0;
+  }
+}
+
+async function openMicDevice(deviceId) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(micAudioConstraints(deviceId));
+  } catch (err) {
+    if (deviceId) {
+      micSettings.deviceId = '';
+      saveMicSettings();
+      stream = await navigator.mediaDevices.getUserMedia(micAudioConstraints(''));
+    } else {
+      throw err;
+    }
+  }
+  ensureMicGraph();
+  await micCtx.resume().catch(() => {});
+  connectMicSource(stream);
+  keepMicSinkAlive();
+  const used = stream.getAudioTracks()[0]?.getSettings?.().deviceId;
+  if (used) {
+    micSettings.deviceId = used;
+    saveMicSettings();
+  }
+  await fillMicDevices();
+  await Promise.all([...peers.values()].map((peer) => publishMicToPeer(peer)));
+}
+
+async function startMicCapture() {
+  if (micStarting || micRawStream || micDenied) return;
+  micStarting = true;
+  loadMicSettings();
+  syncMicControls();
+  micUnmuted = false;
+  micSpeaking = false;
+  micHangUntil = 0;
+  setMicLive(false);
+  micBtn.disabled = false;
+  try {
+    await openMicDevice(micSettings.deviceId);
+  } catch (err) {
+    console.error(err);
+    if (err && err.name === 'NotAllowedError') {
+      micDenied = true;
+      micBtn.disabled = true;
+      showRoomError('Microphone was blocked.');
+    } else {
+      micBtn.disabled = false;
+      showRoomError('Could not start the microphone.');
+    }
+  } finally {
+    micStarting = false;
+  }
+}
+
+function stopMicCapture() {
+  if (micVadRaf) {
+    cancelAnimationFrame(micVadRaf);
+    micVadRaf = 0;
+  }
+  if (micSource) {
+    try { micSource.disconnect(); } catch { /* already gone */ }
+    micSource = null;
+  }
+  if (micRawStream) {
+    for (const track of micRawStream.getTracks()) track.stop();
+    micRawStream = null;
+  }
+  for (const peer of peers.values()) {
+    signalMicToPeer(peer, false);
+    if (peer.micSender) peer.micSender.replaceTrack(null).catch(() => {});
+  }
+  if (micSink) {
+    micSink.pause();
+    micSink.srcObject = null;
+    micSink = null;
+  }
+  if (micCtx) {
+    micCtx.close().catch(() => {});
+    micCtx = null;
+    micInputGain = null;
+    micAnalyser = null;
+    micGate = null;
+    micDest = null;
+  }
+  micProcessedStream = null;
+  micUnmuted = false;
+  micSpeaking = false;
+  micDenied = false;
+  micStarting = false;
+  setMicLive(false);
+  setMicOpen(false);
+  if (micLevel) micLevel.style.width = '0';
+  syncMicControls();
+}
+
+function setMicUnmuted(on) {
+  micUnmuted = Boolean(on);
+  if (micCtx) micCtx.resume().catch(() => {});
+  keepMicSinkAlive();
+  if (!micUnmuted) {
+    micHangUntil = 0;
+    micSpeaking = false;
+  } else {
+    micHangUntil = performance.now() + 400;
+  }
+  setMicLive(micUnmuted);
+  syncMicControls();
+  applyMicGate();
+  refreshPeopleVoice();
+}
+
+function ensureVoiceCtx() {
+  if (voiceCtx) return voiceCtx;
+  voiceCtx = new AudioContext({ latencyHint: 'interactive' });
+  return voiceCtx;
+}
+
+function applyVoiceGain(peer) {
+  if (!peer) return;
+  const vol = peer.voiceMuted ? 0 : (Number.isFinite(peer.voiceVolume) ? peer.voiceVolume : 1);
+  if (peer.voiceEl) {
+    peer.voiceEl.muted = vol === 0;
+    peer.voiceEl.volume = Math.min(1, vol || 0);
+  }
+  if (peer.voiceGraph) {
+    const extra = vol > 1 ? vol : 0;
+    peer.voiceGraph.gain.gain.value = extra;
+  }
+}
+
+function remoteMicRms(peer) {
+  const analyser = peer.voiceGraph && peer.voiceGraph.analyser;
+  if (!analyser) return 0;
+  const buf = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (const sample of buf) sum += sample * sample;
+  return Math.sqrt(sum / buf.length);
+}
+
+function tickRemoteVoice(peer) {
+  if (!peer.voiceGraph) return;
+  peer.voiceRaf = requestAnimationFrame(() => tickRemoteVoice(peer));
+  const speaking = !peer.voiceMuted && remoteMicRms(peer) >= 0.04;
+  if (peer.voiceSpeaking !== speaking) {
+    peer.voiceSpeaking = speaking;
+    refreshPeopleVoice();
+  }
+}
+
+function detachRemoteMic(peer) {
+  if (!peer) return;
+  if (peer.voiceRaf) {
+    cancelAnimationFrame(peer.voiceRaf);
+    peer.voiceRaf = 0;
+  }
+  if (peer.voiceGraph) {
+    try { peer.voiceGraph.source.disconnect(); } catch { /* already gone */ }
+    try { peer.voiceGraph.analyser.disconnect(); } catch { /* already gone */ }
+    try { peer.voiceGraph.gain.disconnect(); } catch { /* already gone */ }
+    peer.voiceGraph = null;
+  }
+  if (peer.voiceEl) {
+    peer.voiceEl.pause();
+    peer.voiceEl.srcObject = null;
+  }
+  peer.voiceSpeaking = false;
+}
+
+function attachRemoteMic(peer, mid, track) {
+  detachRemoteMic(peer);
+  if (!track || track.kind !== 'audio') return;
+  track.enabled = true;
+  const stream = new MediaStream([track]);
+  const el = peer.voiceEl || new Audio();
+  peer.voiceEl = el;
+  el.autoplay = true;
+  el.playsInline = true;
+  el.srcObject = stream;
+  const ctx = ensureVoiceCtx();
+  ctx.resume().catch(() => {});
+  try {
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.3;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    source.connect(analyser);
+    analyser.connect(gain);
+    gain.connect(ctx.destination);
+    peer.voiceGraph = { source, analyser, gain };
+  } catch (err) {
+    console.warn('Voice analyser failed', err);
+  }
+  peer.voiceMid = mid;
+  applyVoiceGain(peer);
+  el.play().catch(() => {});
+  tickRemoteVoice(peer);
+}
+
+function shouldTreatAsMic(peer, mid, track) {
+  return Boolean(track && track.kind === 'audio' && mid && peer.micMids.has(mid));
+}
+
+function handleMicSource(peer, data) {
+  const mid = data.mid != null ? String(data.mid) : '';
+  if (!mid) return;
+  if (data.on) peer.micMids.add(mid);
+  else peer.micMids.delete(mid);
+  if (!data.on) {
+    detachRemoteMic(peer);
+    refreshPeopleVoice();
+    return;
+  }
+  let track = null;
+  for (const [item, mapped] of peer.trackMids) {
+    if (mapped === mid && item.kind === 'audio') track = item;
+  }
+  if (!track) return;
+  if (peer.stream && peer.stream.getAudioTracks().includes(track)) {
+    peer.stream.removeTrack(track);
+    bindRemoteVideo(peer, true);
+  }
+  attachRemoteMic(peer, mid, track);
+}
+
+function closeVoiceCtx() {
+  for (const peer of peers.values()) detachRemoteMic(peer);
+  if (voiceCtx) {
+    voiceCtx.close().catch(() => {});
+    voiceCtx = null;
+  }
+}
+
 function renderQualityRow() {
   qualityRow.replaceChildren();
   for (const preset of Object.values(QUALITY_PRESETS)) {
@@ -353,7 +993,7 @@ function publishLocalTrack(pc, track, stream) {
       return stored.replaceTrack(track);
     }
     const reusable = pc.getSenders().find((sender) => {
-      if (sender === peer.cameraSender) return false;
+      if (sender === peer.cameraSender || sender === peer.micSender) return false;
       if (sender === peer.screenSenders.video || sender === peer.screenSenders.audio) return false;
       return sender.track?.kind === track.kind;
     });
@@ -367,26 +1007,89 @@ function publishLocalTrack(pc, track, stream) {
   return Promise.resolve();
 }
 
-async function attachLocalStream(stream) {
-  localStream = stream;
-  localVideo.srcObject = stream;
-  setLocalSharing(true);
-  for (const track of stream.getAudioTracks()) attachDisplayAudio(track);
-  for (const track of stream.getVideoTracks()) applyCaptureHint(track);
+function liveShareVideo(stream) {
+  return stream.getVideoTracks().find((track) => track.readyState === 'live') || null;
+}
+
+async function recaptureLastDesktop() {
+  if (!desktop || !lastDesktopSource || replacingShare) {
+    stopShare();
+    return;
+  }
+  replacingShare = true;
+  try {
+    const source = lastDesktopSource;
+    const videoStream = await captureDesktopVideo(source.id);
+    stopDesktopAudio();
+    const audioTrack = await startDesktopAudio(
+      source.kind === 'screen' ? { system: true } : { hwnd: source.hwnd }
+    );
+    const tracks = [...videoStream.getVideoTracks()];
+    if (audioTrack) tracks.push(audioTrack);
+    await switchLocalShare(new MediaStream(tracks));
+    lastDesktopCaptureAt = Date.now();
+  } catch (err) {
+    console.error(err);
+    stopShare();
+  } finally {
+    replacingShare = false;
+  }
+}
+
+function onShareVideoEnded(stream) {
+  if (localStream !== stream || replacingShare) return;
+  if (shareEndTimer) clearTimeout(shareEndTimer);
+  shareEndTimer = setTimeout(() => {
+    shareEndTimer = null;
+    if (localStream !== stream) return;
+    if (liveShareVideo(stream)) {
+      publishShareStream(stream).catch((err) => console.error(err));
+      return;
+    }
+    if (desktop && lastDesktopSource) {
+      if (Date.now() - lastDesktopCaptureAt < 800) {
+        stopShare();
+        return;
+      }
+      recaptureLastDesktop();
+      return;
+    }
+    stopShare();
+  }, 300);
+}
+
+function watchShareStream(stream) {
+  stream.addEventListener('addtrack', (event) => {
+    const track = event.track;
+    if (localStream !== stream || !track || track.readyState !== 'live') return;
+    if (shareEndTimer) {
+      clearTimeout(shareEndTimer);
+      shareEndTimer = null;
+    }
+    if (track.kind === 'audio') attachDisplayAudio(track);
+    if (track.kind === 'video') applyCaptureHint(track);
+    for (const peer of peers.values()) {
+      publishLocalTrack(peer.pc, track, stream);
+      if (track.kind === 'video') applyVideoQuality(peer.pc);
+    }
+    localVideo.srcObject = stream;
+    track.addEventListener('ended', () => {
+      if (track.kind === 'audio') {
+        if (localStream === stream && !replacingShare) {
+          showRoomError('Share audio stopped. Start again and enable audio in the picker.');
+        }
+        return;
+      }
+      onShareVideoEnded(stream);
+    });
+  });
+}
+
+async function publishShareStream(stream) {
   const videoPcs = [];
   const publishJobs = [];
   for (const track of stream.getTracks()) {
-    track.addEventListener('ended', () => {
-      if (localStream === stream) {
-        if (track.kind === 'audio') {
-          if (!replacingShare) {
-            showRoomError('Share audio stopped. Start again and enable audio in the picker.');
-          }
-          return;
-        }
-        stopShare();
-      }
-    });
+    if (track.readyState !== 'live') continue;
     for (const peer of peers.values()) {
       publishJobs.push(publishLocalTrack(peer.pc, track, stream));
       if (track.kind === 'video') videoPcs.push(peer.pc);
@@ -394,6 +1097,29 @@ async function attachLocalStream(stream) {
   }
   await Promise.all(publishJobs);
   await Promise.all([...new Set(videoPcs)].map((pc) => applyVideoQuality(pc)));
+  localVideo.srcObject = stream;
+}
+
+async function attachLocalStream(stream) {
+  localStream = stream;
+  localVideo.srcObject = stream;
+  setLocalSharing(true);
+  for (const track of stream.getAudioTracks()) attachDisplayAudio(track);
+  for (const track of stream.getVideoTracks()) applyCaptureHint(track);
+  watchShareStream(stream);
+  for (const track of stream.getTracks()) {
+    track.addEventListener('ended', () => {
+      if (localStream !== stream) return;
+      if (track.kind === 'audio') {
+        if (!replacingShare) {
+          showRoomError('Share audio stopped. Start again and enable audio in the picker.');
+        }
+        return;
+      }
+      onShareVideoEnded(stream);
+    });
+  }
+  await publishShareStream(stream);
   signalScreenToPeers(true);
   if (!stream.getAudioTracks().length) {
     showRoomError(
@@ -410,22 +1136,33 @@ async function captureDisplay() {
     noiseSuppression: false,
     autoGainControl: false,
   };
-  try {
-    return await navigator.mediaDevices.getDisplayMedia({
+  const attempts = [
+    {
       video: videoCaptureConstraints(),
       audio,
       systemAudio: 'include',
-    });
-  } catch (err) {
-    if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) {
-      return navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-        systemAudio: 'include',
-      });
+      surfaceSwitching: 'include',
+    },
+    {
+      video: true,
+      audio: true,
+      systemAudio: 'include',
+      surfaceSwitching: 'include',
+    },
+    { video: true, audio: true, systemAudio: 'include' },
+  ];
+  let lastErr;
+  for (const options of attempts) {
+    try {
+      return await navigator.mediaDevices.getDisplayMedia(options);
+    } catch (err) {
+      lastErr = err;
+      if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) throw err;
+      if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) continue;
+      throw err;
     }
-    throw err;
   }
+  throw lastErr;
 }
 
 function hidePicker() {
@@ -435,6 +1172,8 @@ function hidePicker() {
   pickerContinue.hidden = true;
   pickerContinue.textContent = 'Continue';
   qualityRow.hidden = false;
+  if (pickerTabs) pickerTabs.hidden = true;
+  if (pickerEmpty) pickerEmpty.hidden = true;
   if (pickerTitle) pickerTitle.textContent = 'Share';
   if (cameraPreviewStream && cameraPreviewStream !== cameraStream) {
     for (const track of cameraPreviewStream.getTracks()) track.stop();
@@ -449,6 +1188,8 @@ function hidePicker() {
 function openPicker() {
   picker.hidden = false;
   renderQualityRow();
+  if (pickerTabs) pickerTabs.hidden = true;
+  if (pickerEmpty) pickerEmpty.hidden = true;
 }
 
 function pickShareQuality() {
@@ -468,12 +1209,66 @@ function pickShareQuality() {
   });
 }
 
+function sourceGroup(source) {
+  if (source.group === 'browser' || source.group === 'window') return source.group;
+  return source.kind === 'screen' ? 'window' : 'window';
+}
+
+function pickerItem(source, onChoose) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'picker-item';
+  const thumb = document.createElement('span');
+  thumb.className = 'picker-thumb';
+  const shot = document.createElement('img');
+  shot.className = 'picker-shot';
+  shot.alt = '';
+  shot.src = source.thumbnail || '';
+  thumb.append(shot);
+  if (source.icon) {
+    const icon = document.createElement('img');
+    icon.className = 'picker-app';
+    icon.alt = source.app || '';
+    icon.src = source.icon;
+    thumb.append(icon);
+  }
+  const label = document.createElement('span');
+  if (source.kind === 'screen') label.textContent = `Screen · ${source.name}`;
+  else if (source.app) label.textContent = `${source.app} · ${source.name}`;
+  else label.textContent = source.name;
+  button.append(thumb, label);
+  button.addEventListener('click', () => onChoose(source));
+  return button;
+}
+
+function renderDesktopSources(sources, group, onChoose) {
+  const items = sources.filter((source) => sourceGroup(source) === group);
+  pickerGrid.replaceChildren();
+  if (!items.length) {
+    pickerGrid.hidden = true;
+    if (pickerEmpty) {
+      pickerEmpty.hidden = false;
+      pickerEmpty.textContent = group === 'browser'
+        ? 'No Chrome, Edge, Firefox, or Brave windows are open.'
+        : 'No windows or screens found.';
+    }
+    return;
+  }
+  if (pickerEmpty) pickerEmpty.hidden = true;
+  pickerGrid.hidden = false;
+  const ordered = group === 'window'
+    ? [...items.filter((item) => item.kind === 'screen'), ...items.filter((item) => item.kind !== 'screen')]
+    : items;
+  for (const source of ordered) pickerGrid.append(pickerItem(source, onChoose));
+}
+
 function pickDesktopSource() {
   return new Promise(async (resolve) => {
     openPicker();
     pickerGrid.replaceChildren();
     pickerGrid.hidden = false;
     pickerContinue.hidden = true;
+    if (pickerTabs) pickerTabs.hidden = false;
     const finish = (value) => {
       hidePicker();
       resolve(value);
@@ -493,19 +1288,16 @@ function pickDesktopSource() {
       finish(null);
       return;
     }
-    for (const source of sources) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'picker-item';
-      const img = document.createElement('img');
-      img.alt = '';
-      img.src = source.thumbnail;
-      const label = document.createElement('span');
-      label.textContent = source.kind === 'screen' ? `Screen · ${source.name}` : source.name;
-      button.append(img, label);
-      button.addEventListener('click', () => finish(source));
-      pickerGrid.append(button);
-    }
+    let group = sources.some((source) => sourceGroup(source) === 'window') ? 'window' : 'browser';
+    const setGroup = (next) => {
+      group = next;
+      if (pickerTabWindows) pickerTabWindows.setAttribute('aria-selected', next === 'window' ? 'true' : 'false');
+      if (pickerTabBrowsers) pickerTabBrowsers.setAttribute('aria-selected', next === 'browser' ? 'true' : 'false');
+      renderDesktopSources(sources, group, finish);
+    };
+    if (pickerTabWindows) pickerTabWindows.onclick = () => setGroup('window');
+    if (pickerTabBrowsers) pickerTabBrowsers.onclick = () => setGroup('browser');
+    setGroup(group);
   });
 }
 
@@ -618,6 +1410,8 @@ function stopDesktopAudio() {
 async function captureDesktopShare() {
   const source = await pickDesktopSource();
   if (!source) return null;
+  lastDesktopSource = source;
+  lastDesktopCaptureAt = Date.now();
   const videoStream = await captureDesktopVideo(source.id);
   stopDesktopAudio();
   const audioTrack = await startDesktopAudio(
@@ -701,11 +1495,17 @@ function signalScreenToPeers(on) {
 }
 
 function stopShare() {
+  if (shareEndTimer) {
+    clearTimeout(shareEndTimer);
+    shareEndTimer = null;
+  }
+  lastDesktopSource = null;
   stopDesktopAudio();
   hidePicker();
-  if (localStream) {
-    for (const track of localStream.getTracks()) track.stop();
-    localStream = null;
+  const stream = localStream;
+  localStream = null;
+  if (stream) {
+    for (const track of stream.getTracks()) track.stop();
   }
   localVideo.srcObject = null;
   localVideo.load();
@@ -1066,6 +1866,10 @@ function handleSourceSignal(peer, data) {
     if (!data.on) clearRemoteScreen(peer);
     return;
   }
+  if (data.role === 'mic') {
+    handleMicSource(peer, data);
+    return;
+  }
   const mid = data.mid != null ? String(data.mid) : '';
   if (!mid) return;
   if (data.on) peer.cameraMids.add(mid);
@@ -1266,9 +2070,15 @@ async function unlockRemoteAudio(peer) {
 
 async function unlockMedia() {
   mediaUnlocked = true;
+  ensureVoiceCtx();
+  if (micCtx) micCtx.resume().catch(() => {});
+  if (voiceCtx) voiceCtx.resume().catch(() => {});
+  keepMicSinkAlive();
   for (const peer of peers.values()) {
+    if (peer.voiceEl) peer.voiceEl.play().catch(() => {});
     if (peer.stream) playRemote(peer);
   }
+  if (!leavingRoom && !roomView.hidden && !micRawStream && !micDenied && !micStarting) startMicCapture();
 }
 
 function watchRemoteTrack(peer, track) {
@@ -1306,7 +2116,7 @@ function createRemotePane(id) {
   pane.dataset.peer = id;
   pane.innerHTML = `
     <header class="pane-meta">
-      <span class="pane-name">${peerLabel(id)}</span>
+      <span class="pane-name"></span>
       <span class="tally" aria-hidden="true"></span>
       <span class="pane-state">Idle</span>
     </header>
@@ -1344,14 +2154,27 @@ function createRemotePane(id) {
     applyPeerVolume(peer);
     unlockRemoteAudio(peer);
   });
+  pane.querySelector('.pane-name').textContent = peerLabel(id);
   pane.addEventListener('click', (event) => onPaneClick(event, pane));
   pipRail.append(pane);
   return { pane, video, unmute, volumeSlider };
 }
 
-function resetPeer(id) {
+function setPeerName(id, name) {
+  const peer = peers.get(id);
+  if (!peer || !name) return peer;
+  peer.name = name;
+  const label = peer.pane.querySelector('.pane-name');
+  if (label) label.textContent = name;
+  renderPeopleList();
+  return peer;
+}
+
+function resetPeer(id, name) {
+  const existing = peers.get(id);
+  const keepName = name || (existing && existing.name) || '';
   removePeer(id);
-  return ensurePeer(id);
+  return ensurePeer(id, keepName);
 }
 
 async function flushIce(peer) {
@@ -1384,12 +2207,16 @@ function recoverPeer(peer, forceReset) {
   resetPeer(peer.id);
 }
 
-function ensurePeer(id) {
-  if (peers.has(id)) return peers.get(id);
+function ensurePeer(id, name) {
+  if (peers.has(id)) {
+    if (name) setPeerName(id, name);
+    return peers.get(id);
+  }
   const polite = peerPolite(id);
   const { pane, video, unmute, volumeSlider } = createRemotePane(id);
   const state = {
     id,
+    name: name || '',
     polite,
     pane,
     video,
@@ -1409,10 +2236,18 @@ function ensurePeer(id) {
     isSettingRemoteAnswerPending: false,
     screenSenders: { video: null, audio: null },
     cameraSender: null,
+    micSender: null,
     cameraMids: new Set(),
+    micMids: new Set(),
     cameraTracks: new Map(),
     pendingVideos: new Map(),
     trackMids: new Map(),
+    voiceVolume: 1,
+    voiceMuted: false,
+    voiceSpeaking: false,
+    voiceGraph: null,
+    voiceRaf: 0,
+    voiceMid: '',
   };
   const pc = new RTCPeerConnection({ iceServers });
   state.pc = pc;
@@ -1454,7 +2289,14 @@ function ensurePeer(id) {
     track.enabled = true;
     const mid = transceiver && transceiver.mid != null ? String(transceiver.mid) : '';
     if (mid) state.trackMids.set(track, mid);
-    if (track.kind === 'audio') attachDisplayAudio(track);
+    if (track.kind === 'audio') {
+      if (shouldTreatAsMic(state, mid, track) || !isLive(state.pane)) {
+        if (mid) state.micMids.add(mid);
+        attachRemoteMic(state, mid, track);
+        return;
+      }
+      attachDisplayAudio(track);
+    }
     if (shouldTreatAsCamera(state, mid, track)) {
       addRemoteCamera(state, mid, track);
       return;
@@ -1480,9 +2322,14 @@ function ensurePeer(id) {
     try {
       state.makingOffer = true;
       preferVideoCodecs(pc);
+      preferMicCodecs(pc);
       await pc.setLocalDescription();
       sendSignal(id, { type: 'sdp', description: pc.localDescription });
       if (cameraTrack()) signalCameraToPeer(state, true);
+      if (micTrack()) {
+        signalMicToPeer(state, true);
+        applyMicQuality(state);
+      }
     } catch (err) {
       console.error(err);
       showRoomError('Could not negotiate the connection.');
@@ -1513,6 +2360,11 @@ function ensurePeer(id) {
     signalScreenToPeer(state, true);
   }
   if (cameraTrack()) publishCameraToPeer(state);
+  if (micTrack()) publishMicToPeer(state);
+  if (name) {
+    const label = pane.querySelector('.pane-name');
+    if (label) label.textContent = name;
+  }
   setPeerStatus();
   applyLayout();
   return state;
@@ -1521,6 +2373,8 @@ function ensurePeer(id) {
 function removePeer(id) {
   const peer = peers.get(id);
   if (!peer) return;
+  detachRemoteMic(peer);
+  if (voicePeerId === id) voicePeerId = null;
   if (peer.playWatch) {
     clearInterval(peer.playWatch);
     peer.playWatch = null;
@@ -1576,6 +2430,9 @@ async function handleSignal(from, data) {
   if (!data.description) return;
 
   const description = data.description;
+  if (pc.signalingState === 'closed') return;
+  if (description.type === 'answer' && pc.signalingState !== 'have-local-offer') return;
+
   const readyForOffer =
     !peer.makingOffer && (pc.signalingState === 'stable' || peer.isSettingRemoteAnswerPending);
   const offerCollision = description.type === 'offer' && !readyForOffer;
@@ -1586,6 +2443,8 @@ async function handleSignal(from, data) {
   try {
     await pc.setRemoteDescription(description);
   } catch (err) {
+    peer.isSettingRemoteAnswerPending = false;
+    if (err && err.name === 'InvalidStateError') return;
     console.error(err);
     recoverPeer(peer, true);
     return;
@@ -1593,30 +2452,48 @@ async function handleSignal(from, data) {
   peer.isSettingRemoteAnswerPending = false;
   await flushIce(peer);
   preferVideoCodecs(pc);
+  preferMicCodecs(pc);
 
   if (description.type === 'offer') {
     await pc.setLocalDescription();
     sendSignal(from, { type: 'sdp', description: pc.localDescription });
     if (cameraTrack()) signalCameraToPeer(peer, true);
-  } else if (cameraTrack()) {
-    signalCameraToPeer(peer, true);
+    if (micTrack()) {
+      signalMicToPeer(peer, true);
+      applyMicQuality(peer);
+    }
+  } else {
+    if (cameraTrack()) signalCameraToPeer(peer, true);
+    if (micTrack()) {
+      signalMicToPeer(peer, true);
+      applyMicQuality(peer);
+    }
   }
+}
+
+function peerEntry(item) {
+  if (!item) return null;
+  if (typeof item === 'string') return { id: item, name: '' };
+  return { id: item.id, name: item.name || '' };
 }
 
 async function handleRoomMessage(msg) {
   if (msg.type === 'hello') {
     myId = msg.id;
-    const listed = new Set(msg.peers || []);
+    if (msg.name) setYouName(msg.name);
+    const listed = (msg.peers || []).map(peerEntry).filter((peer) => peer && peer.id);
+    const listedIds = new Set(listed.map((peer) => peer.id));
     for (const id of [...peers.keys()]) {
-      if (!listed.has(id)) removePeer(id);
+      if (!listedIds.has(id)) removePeer(id);
     }
-    for (const id of listed) {
-      const existing = peers.get(id);
+    for (const peer of listed) {
+      const existing = peers.get(peer.id);
       if (!existing) {
-        ensurePeer(id);
-        sendSignal(id, { type: 'restart' });
+        ensurePeer(peer.id, peer.name);
+        sendSignal(peer.id, { type: 'restart' });
         continue;
       }
+      setPeerName(peer.id, peer.name);
       const ice = existing.pc.iceConnectionState;
       const conn = existing.pc.connectionState;
       if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
@@ -1627,7 +2504,7 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'peer-joined') {
-    if (msg.id && msg.id !== myId) resetPeer(msg.id);
+    if (msg.id && msg.id !== myId) resetPeer(msg.id, msg.name);
     showRoomError('');
     return;
   }
@@ -1676,7 +2553,7 @@ function connectSocket() {
   });
 
   events.addEventListener('error', () => {
-    if (gen !== socketGen) return;
+    if (gen !== socketGen || leavingRoom) return;
     if (events && events.readyState === EventSource.CONNECTING) {
       if (opened) showRoomError('Reconnecting to the room…');
       return;
@@ -1688,7 +2565,9 @@ function connectSocket() {
   });
 }
 
-async function enterRoom() {
+async function enterRoom(info) {
+  leavingRoom = false;
+  if (info && info.username) setYouName(info.username);
   const configRes = await fetch('/api/config', { credentials: 'same-origin' });
   if (configRes.ok) {
     const config = await configRes.json();
@@ -1700,31 +2579,151 @@ async function enterRoom() {
   floatBtn.hidden = !desktop;
   setLocalSharing(Boolean(localStream));
   setCameraLive(Boolean(cameraTrack()));
+  setMicLive(micUnmuted);
   setPeerStatus();
   applyLayout();
   refreshRemoteMedia();
   await connectSocket();
+  await startMicCapture();
 }
+
+function disconnectSocket() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  socketGen += 1;
+  if (events) {
+    events.close();
+    events = null;
+  }
+}
+
+async function leaveRoom() {
+  if (leavingRoom) return;
+  leavingRoom = true;
+  setPeopleOpen(false);
+  setMicOpen(false);
+  stopShare();
+  stopCamera();
+  stopMicCapture();
+  closeVoiceCtx();
+  disconnectSocket();
+  closeAllPeers();
+  setYouName('');
+  myId = null;
+  try {
+    await fetch('/api/leave', { method: 'POST', credentials: 'same-origin' });
+  } catch {
+    // Still return home if the network blips.
+  }
+  showView('login');
+  setHomeMode('join');
+  prefillJoinForm();
+  usernameInput.value = '';
+  usernameInput.focus();
+}
+
+async function readError(res, fallback) {
+  try {
+    const body = await res.json();
+    if (body && body.error) return body.error;
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
+modeJoin.addEventListener('click', () => {
+  setHomeMode('join');
+  roomNameInput.focus();
+});
+
+modeCreate.addEventListener('click', () => {
+  setHomeMode('create');
+  roomNameInput.focus();
+});
+
+peerStatus.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setPeopleOpen(peoplePanel.hidden);
+});
+
+micBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (micBtn.disabled) return;
+  setMicOpen(micPanel.hidden);
+});
+
+micToggle.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setMicUnmuted(!micUnmuted);
+});
+
+micDevice.addEventListener('change', async () => {
+  const id = micDevice.value;
+  micSettings.deviceId = id;
+  saveMicSettings();
+  try {
+    await openMicDevice(id);
+  } catch (err) {
+    console.error(err);
+    showRoomError('Could not switch microphone.');
+  }
+});
+
+micGainSlider.addEventListener('input', () => {
+  micSettings.gain = Number(micGainSlider.value) / 100;
+  if (micInputGain) micInputGain.gain.value = micSettings.gain;
+  saveMicSettings();
+});
+
+micVadSlider.addEventListener('input', () => {
+  micSettings.threshold = Number(micVadSlider.value) / 100;
+  saveMicSettings();
+});
+
+micPanel.addEventListener('click', (event) => event.stopPropagation());
+
+document.addEventListener('click', (event) => {
+  const inPeople = event.target.closest('.people-wrap');
+  const inMic = event.target.closest('.mic-wrap');
+  if (!peoplePanel.hidden && !inPeople) setPeopleOpen(false);
+  if (!micPanel.hidden && !inMic) setMicOpen(false);
+  if (voicePeerId && !inPeople) {
+    voicePeerId = null;
+    refreshPeopleVoice();
+  }
+});
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   unlockMedia();
   loginError.hidden = true;
-  loginError.textContent = 'Wrong password';
+  loginError.textContent = '';
   loginBtn.disabled = true;
+  const payload = {
+    name: roomNameInput.value,
+    password: passwordInput.value,
+    username: usernameInput.value,
+  };
   try {
-    const res = await fetch('/api/login', {
+    const path = homeMode === 'create' ? '/api/rooms' : '/api/rooms/join';
+    const res = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ password: passwordInput.value }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
+      loginError.textContent = await readError(res, 'Could not enter the room.');
       loginError.hidden = false;
       return;
     }
-    passwordInput.value = '';
-    await enterRoom();
+    const info = await res.json();
+    if (info.permanent) cachePermanentRoom(payload.name.trim(), payload.password);
+    usernameInput.value = '';
+    await enterRoom(info);
   } catch {
     loginError.textContent = 'Could not reach the server.';
     loginError.hidden = false;
@@ -1758,6 +2757,10 @@ floatBtn.addEventListener('click', () => {
   else openFloatWindow();
 });
 
+leaveBtn.addEventListener('click', () => {
+  leaveRoom();
+});
+
 camFeature.addEventListener('click', (event) => {
   event.stopPropagation();
   const pane = getFeaturedPane();
@@ -1780,15 +2783,24 @@ document.addEventListener('webkitfullscreenchange', () => {
   placeCamChrome();
 });
 
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    fillMicDevices().catch(() => {});
+  });
+}
+
 async function boot() {
+  setHomeMode('join');
+  prefillJoinForm();
   try {
     const res = await fetch('/api/me', { credentials: 'same-origin' });
     if (res.ok) {
-      await enterRoom();
+      const info = await res.json();
+      await enterRoom(info);
       return;
     }
   } catch {
-    // Stay on login.
+    // Stay on home.
   }
   showView('login');
 }

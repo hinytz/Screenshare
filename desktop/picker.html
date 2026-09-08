@@ -10,6 +10,9 @@
         --line: #1c1c1c;
         --text: #eeeeee;
         --muted: #7a7a7a;
+        --quality: #6b9fff;
+        --quality-bg: #141c28;
+        --radius: 7px;
       }
       * { box-sizing: border-box; }
       html, body {
@@ -39,7 +42,8 @@
         font: inherit;
         color: var(--text);
         background: var(--panel);
-        border: 1px solid var(--line);
+        border: none;
+        border-radius: var(--radius);
         cursor: pointer;
       }
       #cancel {
@@ -47,11 +51,35 @@
         text-transform: uppercase;
         font-size: 0.7rem;
       }
+      #cancel:hover {
+        background: #141414;
+      }
+      .tabs {
+        display: flex;
+        gap: 0.45rem;
+        margin-bottom: 0.9rem;
+      }
+      .tabs button {
+        padding: 0.45rem 0.75rem;
+      }
+      .tabs button[aria-selected="true"] {
+        color: var(--quality);
+        background: var(--quality-bg);
+      }
       #grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
         gap: 0.7rem;
         overflow: auto;
+      }
+      #grid[hidden],
+      #empty[hidden] {
+        display: none;
+      }
+      #empty {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.78rem;
       }
       .item {
         display: flex;
@@ -59,12 +87,31 @@
         gap: 0.45rem;
         padding: 0.45rem;
         text-align: left;
+        background: var(--bg);
+        border: 1px solid var(--line);
       }
-      .item img {
+      .thumb {
+        position: relative;
+        display: block;
+      }
+      .shot {
+        display: block;
         width: 100%;
         aspect-ratio: 16 / 10;
         object-fit: cover;
         background: #050505;
+        border-radius: var(--radius);
+      }
+      .app {
+        position: absolute;
+        left: 0.35rem;
+        bottom: 0.35rem;
+        width: 1.35rem;
+        height: 1.35rem;
+        object-fit: contain;
+        border-radius: 4px;
+        background: rgb(0 0 0 / 0.72);
+        padding: 0.1rem;
       }
       .item span {
         font-size: 0.72rem;
@@ -80,24 +127,80 @@
       <h1>Share</h1>
       <button id="cancel" type="button">Cancel</button>
     </header>
+    <div class="tabs" role="tablist">
+      <button id="tab-windows" type="button" role="tab" aria-selected="true">Windows</button>
+      <button id="tab-browsers" type="button" role="tab" aria-selected="false">Browsers</button>
+    </div>
     <div id="grid"></div>
+    <p id="empty" hidden></p>
     <script>
       const grid = document.getElementById('grid');
+      const empty = document.getElementById('empty');
+      const tabWindows = document.getElementById('tab-windows');
+      const tabBrowsers = document.getElementById('tab-browsers');
       document.getElementById('cancel').onclick = () => window.picker.cancel();
-      window.picker.list().then((sources) => {
-        for (const source of sources) {
+
+      function groupOf(source) {
+        return source.group === 'browser' ? 'browser' : 'window';
+      }
+
+      function render(sources, group) {
+        const items = sources.filter((source) => groupOf(source) === group);
+        tabWindows.setAttribute('aria-selected', group === 'window' ? 'true' : 'false');
+        tabBrowsers.setAttribute('aria-selected', group === 'browser' ? 'true' : 'false');
+        grid.replaceChildren();
+        if (!items.length) {
+          grid.hidden = true;
+          empty.hidden = false;
+          empty.textContent = group === 'browser'
+            ? 'No Chrome, Edge, Firefox, or Brave windows are open.'
+            : 'No windows or screens found.';
+          return;
+        }
+        empty.hidden = true;
+        grid.hidden = false;
+        const ordered = group === 'window'
+          ? [...items.filter((item) => item.kind === 'screen'), ...items.filter((item) => item.kind !== 'screen')]
+          : items;
+        for (const source of ordered) {
           const button = document.createElement('button');
           button.type = 'button';
           button.className = 'item';
-          const img = document.createElement('img');
-          img.alt = '';
-          img.src = source.thumbnail;
+          const thumb = document.createElement('span');
+          thumb.className = 'thumb';
+          const shot = document.createElement('img');
+          shot.className = 'shot';
+          shot.alt = '';
+          shot.src = source.thumbnail || '';
+          thumb.append(shot);
+          if (source.icon) {
+            const icon = document.createElement('img');
+            icon.className = 'app';
+            icon.alt = source.app || '';
+            icon.src = source.icon;
+            thumb.append(icon);
+          }
           const label = document.createElement('span');
-          label.textContent = source.kind === 'screen' ? `Screen · ${source.name}` : source.name;
-          button.append(img, label);
+          if (source.kind === 'screen') label.textContent = 'Screen · ' + source.name;
+          else if (source.app) label.textContent = source.app + ' · ' + source.name;
+          else label.textContent = source.name;
+          button.append(thumb, label);
           button.onclick = () => window.picker.choose(source);
           grid.append(button);
         }
+      }
+
+      window.picker.list().then((sources) => {
+        let group = sources.some((source) => groupOf(source) === 'window') ? 'window' : 'browser';
+        tabWindows.onclick = () => {
+          group = 'window';
+          render(sources, group);
+        };
+        tabBrowsers.onclick = () => {
+          group = 'browser';
+          render(sources, group);
+        };
+        render(sources, group);
       });
     </script>
   </body>
