@@ -174,19 +174,20 @@ app.get('/api/stream', requireSession, (req, res) => {
     replaced: false,
   };
 
+  let replaced = false;
   for (const existing of [...peers]) {
     if (existing.token === client.token) {
       existing.replaced = true;
       peers.delete(existing);
       existing.res.end();
-      broadcastToOthers(existing, { type: 'peer-left', id: existing.id });
+      replaced = true;
     }
   }
 
   const others = [...peers].map((peer) => peer.id);
   peers.add(client);
   send(client, { type: 'hello', id: client.id, peers: others });
-  broadcastToOthers(client, { type: 'peer-joined', id: client.id });
+  if (!replaced) broadcastToOthers(client, { type: 'peer-joined', id: client.id });
 
   const heartbeat = setInterval(() => {
     if (res.writableEnded) return;

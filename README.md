@@ -1,8 +1,12 @@
 # Screenshare
 
-Private WebRTC screenshare. Anyone with the password can join. Everyone can share at the same time (screen + system/tab audio when the browser allows it). There is no microphone capture.
+Self-hosted WebRTC screenshare. Anyone with the password can join. Everyone can share at the same time (screen + system/tab audio when the browser allows it). There is no microphone capture.
 
 The server only serves the page and relays signaling. Video and audio go peer-to-peer. Google public STUN is used by default.
+
+**[screenshare.hinytz.com](https://screenshare.hinytz.com) is a private instance.** It is not open to the public. Clone this repo and run your own.
+
+The packaged Windows app in this repo still defaults to that private URL. Point it at your server with `SCREENSHARE_URL` (see below).
 
 ## Local run
 
@@ -51,7 +55,7 @@ npm run dev
 
 `npm run rebuild:native` needs Visual Studio Build Tools (C++ workload). `npm run build:helper` needs the .NET 8 SDK and is only a fallback. `npm run pack` bumps the desktop app version, rebuilds native audio, and builds an NSIS installer in `desktop/dist`. Use `npm run pack:same` to rebuild without changing the version, or `npm run bump -- minor` / `npm run bump -- 1.2.0` to set it yourself. `npm run release` does the same as `pack` and uploads the installer to GitHub Releases so installed apps can update themselves. Set `GH_TOKEN` (repo scope) first. Existing installs pick up auto-update only after they install a release build once.
 
-Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. The packaged app loads `https://screenshare.hinytz.com`. Override with `SCREENSHARE_URL`. Deploy the updated `public/` folder so the site matches the desktop capture path.
+Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. A packaged build from this repo loads `https://screenshare.hinytz.com` (private; not for public use). Override with `SCREENSHARE_URL` when you ship your own instance. Deploy the updated `public/` folder so the site matches the desktop capture path.
 
 ## Notes
 

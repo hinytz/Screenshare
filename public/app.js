@@ -42,6 +42,9 @@ const DEFAULT_ICE = [
 
 let iceServers = DEFAULT_ICE;
 let events = null;
+let reconnectTimer = null;
+let socketGen = 0;
+let roomQueue = Promise.resolve();
 let myId = null;
 let featured = 'you';
 let featuredView = { kind: 'pane' };
@@ -199,15 +202,31 @@ function onPaneClick(event, pane) {
   toggleFullscreen(pane);
 }
 
-function sendSignal(to, data) {
-  fetch('/api/signal', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'signal', to, data }),
-  }).catch(() => {
-    showRoomError('Could not send signaling data.');
-  });
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function peerPolite(id) {
+  return Boolean(myId) && String(myId) > String(id);
+}
+
+async function sendSignal(to, data) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch('/api/signal', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'signal', to, data }),
+      });
+      if (res.ok) return;
+      if (res.status !== 404 && res.status !== 409) break;
+    } catch {
+      // retry
+    }
+    await sleep(250 * (attempt + 1));
+  }
+  showRoomError('Could not send signaling data.');
 }
 
 function currentQuality() {
@@ -375,6 +394,7 @@ async function attachLocalStream(stream) {
   }
   await Promise.all(publishJobs);
   await Promise.all([...new Set(videoPcs)].map((pc) => applyVideoQuality(pc)));
+  signalScreenToPeers(true);
   if (!stream.getAudioTracks().length) {
     showRoomError(
       desktop
@@ -672,6 +692,14 @@ async function startShare() {
   }
 }
 
+function signalScreenToPeer(peer, on) {
+  sendSignal(peer.id, { type: 'source', role: 'screen', on: Boolean(on) });
+}
+
+function signalScreenToPeers(on) {
+  for (const peer of peers.values()) signalScreenToPeer(peer, on);
+}
+
 function stopShare() {
   stopDesktopAudio();
   hidePicker();
@@ -682,6 +710,7 @@ function stopShare() {
   localVideo.srcObject = null;
   localVideo.load();
   setLocalSharing(false);
+  signalScreenToPeers(false);
   for (const peer of peers.values()) {
     for (const kind of ['video', 'audio']) {
       const sender = peer.screenSenders[kind];
@@ -806,7 +835,7 @@ function remoteHasAudio(peer) {
 
 function liveRemoteTracks(peer) {
   return peer.stream
-    ? peer.stream.getTracks().filter((track) => track.readyState === 'live' && !track.muted)
+    ? peer.stream.getTracks().filter((track) => track.readyState === 'live')
     : [];
 }
 
@@ -1021,7 +1050,22 @@ function promotePendingScreen(peer) {
   }
 }
 
+function clearRemoteScreen(peer) {
+  if (peer.stream) {
+    for (const track of [...peer.stream.getTracks()]) peer.stream.removeTrack(track);
+  }
+  peer.boundTrackIds = '';
+  setPaneLive(peer.pane, false, 'Idle');
+  clearPaneVideo(peer.video);
+  peer.unmute.hidden = true;
+  if (featuredView.kind === 'camera') refreshRemoteMedia();
+}
+
 function handleSourceSignal(peer, data) {
+  if (data.role === 'screen') {
+    if (!data.on) clearRemoteScreen(peer);
+    return;
+  }
   const mid = data.mid != null ? String(data.mid) : '';
   if (!mid) return;
   if (data.on) peer.cameraMids.add(mid);
@@ -1178,25 +1222,10 @@ function reloadRemotePane(peer) {
 
 function watchPlaybackHealth(peer) {
   if (peer.playWatch) return;
-  let lastFrames = -1;
-  let stale = 0;
   peer.playWatch = setInterval(() => {
     const video = peer.video;
-    if (!video || !isLive(peer.pane) || !video.srcObject) {
-      lastFrames = -1;
-      stale = 0;
-      return;
-    }
+    if (!video || !isLive(peer.pane) || !video.srcObject) return;
     if (video.paused) video.play().catch(() => {});
-    const quality = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : null;
-    const frames = quality ? quality.totalVideoFrames : 0;
-    if (lastFrames >= 0 && frames === lastFrames) stale += 1;
-    else stale = 0;
-    lastFrames = frames;
-    if (stale >= 3) {
-      stale = 0;
-      reloadRemotePane(peer);
-    }
   }, 1000);
 }
 
@@ -1243,7 +1272,6 @@ async function unlockMedia() {
 }
 
 function watchRemoteTrack(peer, track) {
-  let muteTimer = null;
   const refresh = () => {
     if (peer.stream && track.readyState === 'ended') peer.stream.removeTrack(track);
     const live = livePaneTracks(peer);
@@ -1259,17 +1287,11 @@ function watchRemoteTrack(peer, track) {
   };
   track.addEventListener('ended', refresh);
   track.addEventListener('mute', () => {
-    if (muteTimer) clearTimeout(muteTimer);
-    muteTimer = setTimeout(() => {
-      muteTimer = null;
-      refresh();
-    }, 400);
+    if (track.kind === 'video' && peer.video && peer.video.paused) {
+      peer.video.play().catch(() => {});
+    }
   });
   track.addEventListener('unmute', () => {
-    if (muteTimer) {
-      clearTimeout(muteTimer);
-      muteTimer = null;
-    }
     track.enabled = true;
     refresh();
     if (isLive(peer.pane)) playRemote(peer);
@@ -1327,13 +1349,44 @@ function createRemotePane(id) {
   return { pane, video, unmute, volumeSlider };
 }
 
-function resetPeer(id, polite) {
+function resetPeer(id) {
   removePeer(id);
-  return ensurePeer(id, polite);
+  return ensurePeer(id);
 }
 
-function ensurePeer(id, polite) {
+async function flushIce(peer) {
+  peer.remoteReady = true;
+  const queued = peer.iceQueue || [];
+  peer.iceQueue = [];
+  for (const candidate of queued) {
+    try {
+      await peer.pc.addIceCandidate(candidate);
+    } catch (err) {
+      if (!peer.ignoreOffer) console.error(err);
+    }
+  }
+}
+
+function recoverPeer(peer, forceReset) {
+  if (!peer || !peer.pc || peer.pc.signalingState === 'closed') return;
+  const now = Date.now();
+  if (peer.recoverAt && now < peer.recoverAt) return;
+  peer.recoverAt = now + 4000;
+  if (!forceReset && peer.pc.remoteDescription) {
+    try {
+      peer.pc.restartIce();
+      return;
+    } catch {
+      // rebuild below
+    }
+  }
+  sendSignal(peer.id, { type: 'restart' });
+  resetPeer(peer.id);
+}
+
+function ensurePeer(id) {
   if (peers.has(id)) return peers.get(id);
+  const polite = peerPolite(id);
   const { pane, video, unmute, volumeSlider } = createRemotePane(id);
   const state = {
     id,
@@ -1347,6 +1400,10 @@ function ensurePeer(id, polite) {
     playWatch: null,
     pc: null,
     stream: null,
+    iceQueue: [],
+    remoteReady: false,
+    iceTimer: null,
+    recoverAt: 0,
     makingOffer: false,
     ignoreOffer: false,
     isSettingRemoteAnswerPending: false,
@@ -1364,6 +1421,35 @@ function ensurePeer(id, polite) {
     sendSignal(id, { type: 'ice', candidate });
   };
 
+  const onIce = () => {
+    const ice = pc.iceConnectionState;
+    const conn = pc.connectionState;
+    if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
+      if (state.iceTimer) {
+        clearTimeout(state.iceTimer);
+        state.iceTimer = null;
+      }
+      if (state.stream) playRemote(state);
+      return;
+    }
+    if (ice === 'failed' || conn === 'failed') {
+      recoverPeer(state);
+      return;
+    }
+    if (ice === 'disconnected') {
+      if (state.iceTimer) clearTimeout(state.iceTimer);
+      state.iceTimer = setTimeout(() => {
+        state.iceTimer = null;
+        if (pc.signalingState === 'closed') return;
+        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+          recoverPeer(state);
+        }
+      }, 2500);
+    }
+  };
+  pc.oniceconnectionstatechange = onIce;
+  pc.onconnectionstatechange = onIce;
+
   pc.ontrack = ({ track, transceiver }) => {
     track.enabled = true;
     const mid = transceiver && transceiver.mid != null ? String(transceiver.mid) : '';
@@ -1375,7 +1461,7 @@ function ensurePeer(id, polite) {
     }
     if (track.kind === 'video') {
       const paneVideo = state.stream
-        ? state.stream.getVideoTracks().find((item) => item.readyState === 'live' && !item.muted && item !== track)
+        ? state.stream.getVideoTracks().find((item) => item.readyState === 'live' && item !== track)
         : null;
       if (paneVideo) {
         state.pendingVideos.set(mid || track.id, track);
@@ -1424,6 +1510,7 @@ function ensurePeer(id, polite) {
     }
     preferVideoCodecs(pc);
     if (hasVideo) applyVideoQuality(pc);
+    signalScreenToPeer(state, true);
   }
   if (cameraTrack()) publishCameraToPeer(state);
   setPeerStatus();
@@ -1438,9 +1525,15 @@ function removePeer(id) {
     clearInterval(peer.playWatch);
     peer.playWatch = null;
   }
+  if (peer.iceTimer) {
+    clearTimeout(peer.iceTimer);
+    peer.iceTimer = null;
+  }
   peer.pc.onicecandidate = null;
   peer.pc.ontrack = null;
   peer.pc.onnegotiationneeded = null;
+  peer.pc.oniceconnectionstatechange = null;
+  peer.pc.onconnectionstatechange = null;
   peer.pc.close();
   peer.pane.remove();
   peers.delete(id);
@@ -1458,13 +1551,21 @@ function closeAllPeers() {
 }
 
 async function handleSignal(from, data) {
-  const peer = ensurePeer(from, true);
+  if (data.type === 'restart') {
+    resetPeer(from);
+    return;
+  }
+  const peer = ensurePeer(from);
   const { pc } = peer;
   if (data.type === 'source') {
     handleSourceSignal(peer, data);
     return;
   }
   if (data.type === 'ice') {
+    if (!peer.remoteReady) {
+      peer.iceQueue.push(data.candidate);
+      return;
+    }
     try {
       await pc.addIceCandidate(data.candidate);
     } catch (err) {
@@ -1482,8 +1583,15 @@ async function handleSignal(from, data) {
   if (peer.ignoreOffer) return;
 
   peer.isSettingRemoteAnswerPending = description.type === 'answer';
-  await pc.setRemoteDescription(description);
+  try {
+    await pc.setRemoteDescription(description);
+  } catch (err) {
+    console.error(err);
+    recoverPeer(peer, true);
+    return;
+  }
   peer.isSettingRemoteAnswerPending = false;
+  await flushIce(peer);
   preferVideoCodecs(pc);
 
   if (description.type === 'offer') {
@@ -1498,9 +1606,20 @@ async function handleSignal(from, data) {
 async function handleRoomMessage(msg) {
   if (msg.type === 'hello') {
     myId = msg.id;
-    closeAllPeers();
-    for (const id of msg.peers || []) {
-      ensurePeer(id, true);
+    const listed = new Set(msg.peers || []);
+    for (const id of [...peers.keys()]) {
+      if (!listed.has(id)) removePeer(id);
+    }
+    for (const id of listed) {
+      const existing = peers.get(id);
+      if (!existing) {
+        ensurePeer(id);
+        sendSignal(id, { type: 'restart' });
+        continue;
+      }
+      const ice = existing.pc.iceConnectionState;
+      const conn = existing.pc.connectionState;
+      if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
     }
     setPeerStatus();
     refreshRemoteMedia();
@@ -1508,7 +1627,7 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'peer-joined') {
-    if (msg.id && msg.id !== myId) resetPeer(msg.id, false);
+    if (msg.id && msg.id !== myId) resetPeer(msg.id);
     showRoomError('');
     return;
   }
@@ -1529,6 +1648,11 @@ async function handleRoomMessage(msg) {
 }
 
 function connectSocket() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  const gen = ++socketGen;
   if (events) events.close();
   events = new EventSource('/api/stream');
   let opened = false;
@@ -1538,24 +1662,28 @@ function connectSocket() {
     showRoomError('');
   });
 
-  events.addEventListener('message', async (event) => {
+  events.addEventListener('message', (event) => {
     let msg;
     try {
       msg = JSON.parse(event.data);
     } catch {
       return;
     }
-    await handleRoomMessage(msg);
+    roomQueue = roomQueue.then(() => handleRoomMessage(msg)).catch((err) => {
+      console.error(err);
+      showRoomError('Signaling failed. Refresh and try again.');
+    });
   });
 
   events.addEventListener('error', () => {
-    if (events && events.readyState === EventSource.CONNECTING && opened) {
+    if (gen !== socketGen) return;
+    if (events && events.readyState === EventSource.CONNECTING) {
+      if (opened) showRoomError('Reconnecting to the room…');
       return;
     }
     if (events && events.readyState === EventSource.CLOSED) {
-      closeAllPeers();
-      setPeerStatus();
-      showRoomError('Disconnected from the room.');
+      showRoomError('Disconnected from the room. Reconnecting…');
+      reconnectTimer = setTimeout(() => connectSocket(), 1000);
     }
   });
 }
