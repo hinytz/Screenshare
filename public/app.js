@@ -696,6 +696,7 @@ function signalMicToPeer(peer, on) {
 async function publishMicToPeer(peer) {
   const track = micTrack();
   if (!track) return;
+  if ('contentHint' in track) track.contentHint = 'speech';
   if (peer.micSender && peer.pc.getSenders().includes(peer.micSender)) {
     await peer.micSender.replaceTrack(track);
   } else {
@@ -934,26 +935,132 @@ function shouldTreatAsMic(peer, mid, track) {
   return Boolean(track && track.kind === 'audio' && mid && peer.micMids.has(mid));
 }
 
+function findAudioTrack(peer, mid) {
+  if (!mid) return null;
+  if (peer.pendingAudios && peer.pendingAudios.has(mid)) return peer.pendingAudios.get(mid);
+  for (const [item, mapped] of peer.trackMids) {
+    if (mapped === mid && item.kind === 'audio') return item;
+  }
+  return null;
+}
+
 function handleMicSource(peer, data) {
   const mid = data.mid != null ? String(data.mid) : '';
   if (!mid) return;
   if (data.on) peer.micMids.add(mid);
   else peer.micMids.delete(mid);
+  if (peer.pendingAudios) peer.pendingAudios.delete(mid);
   if (!data.on) {
     detachRemoteMic(peer);
     refreshPeopleVoice();
     return;
   }
-  let track = null;
-  for (const [item, mapped] of peer.trackMids) {
-    if (mapped === mid && item.kind === 'audio') track = item;
+  const track = findAudioTrack(peer, mid);
+  if (!track) {
+    flushPendingAudio(peer);
+    return;
   }
-  if (!track) return;
   if (peer.stream && peer.stream.getAudioTracks().includes(track)) {
     peer.stream.removeTrack(track);
     bindRemoteVideo(peer, true);
   }
   attachRemoteMic(peer, mid, track);
+  flushPendingAudio(peer);
+}
+
+function attachShareAudio(peer, track) {
+  if (!track || track.kind !== 'audio') return;
+  attachDisplayAudio(track);
+  if (!peer.stream) peer.stream = new MediaStream();
+  for (const existing of [...peer.stream.getAudioTracks()]) {
+    if (existing === track) continue;
+    const existingMid = peer.trackMids.get(existing);
+    if (existingMid && peer.micMids.has(existingMid)) continue;
+    peer.stream.removeTrack(existing);
+  }
+  if (!peer.stream.getAudioTracks().includes(track)) peer.stream.addTrack(track);
+  watchRemoteTrack(peer, track);
+  playRemote(peer);
+}
+
+function removeShareAudioFromPane(peer, mid) {
+  if (!peer.stream) return;
+  for (const track of [...peer.stream.getAudioTracks()]) {
+    const mapped = peer.trackMids.get(track);
+    if (mid && mapped !== mid) continue;
+    if (!mid && mapped && peer.micMids.has(mapped)) continue;
+    peer.stream.removeTrack(track);
+  }
+  bindRemoteVideo(peer, true);
+}
+
+function handleShareAudioSource(peer, data) {
+  const mid = data.mid != null ? String(data.mid) : '';
+  if (!data.on) {
+    if (mid) peer.screenAudioMids.delete(mid);
+    else peer.screenAudioMids.clear();
+    removeShareAudioFromPane(peer, mid);
+    return;
+  }
+  if (!mid) return;
+  peer.screenAudioMids.add(mid);
+  const track = findAudioTrack(peer, mid);
+  if (peer.pendingAudios) peer.pendingAudios.delete(mid);
+  if (track) attachShareAudio(peer, track);
+}
+
+function flushPendingAudio(peer) {
+  if (!peer.pendingAudios) return;
+  for (const [mid, track] of [...peer.pendingAudios]) {
+    if (peer.micMids.has(mid)) {
+      peer.pendingAudios.delete(mid);
+      attachRemoteMic(peer, mid, track);
+      continue;
+    }
+    if (peer.screenAudioMids.has(mid) || (peer.screenOn && peer.voiceMid)) {
+      peer.pendingAudios.delete(mid);
+      attachShareAudio(peer, track);
+    }
+  }
+}
+
+function routeRemoteAudio(peer, mid, track) {
+  if (shouldTreatAsMic(peer, mid, track)) {
+    if (peer.pendingAudios) peer.pendingAudios.delete(mid);
+    attachRemoteMic(peer, mid, track);
+    flushPendingAudio(peer);
+    return;
+  }
+  if (mid && peer.screenAudioMids.has(mid)) {
+    if (peer.pendingAudios) peer.pendingAudios.delete(mid);
+    attachShareAudio(peer, track);
+    return;
+  }
+  if (mid) peer.pendingAudios.set(mid, track);
+  flushPendingAudio(peer);
+}
+
+function signalShareAudioToPeer(peer, on) {
+  const sender = peer.screenSenders.audio;
+  const transceiver = sender && peer.pc.getTransceivers().find((item) => item.sender === sender);
+  const mid = transceiver && transceiver.mid != null ? String(transceiver.mid) : '';
+  if (on && !mid) return;
+  sendSignal(peer.id, { type: 'source', role: 'share-audio', mid, on: Boolean(on) });
+}
+
+function signalMediaRoles(peer) {
+  if (cameraTrack()) signalCameraToPeer(peer, true);
+  if (micTrack()) {
+    signalMicToPeer(peer, true);
+    applyMicQuality(peer);
+  }
+  if (localStream) {
+    signalScreenToPeer(peer, true);
+    signalShareAudioToPeer(
+      peer,
+      localStream.getAudioTracks().some((track) => track.readyState === 'live')
+    );
+  }
 }
 
 function closeVoiceCtx() {
@@ -1511,6 +1618,7 @@ function stopShare() {
   localVideo.load();
   setLocalSharing(false);
   signalScreenToPeers(false);
+  for (const peer of peers.values()) signalShareAudioToPeer(peer, false);
   for (const peer of peers.values()) {
     for (const kind of ['video', 'audio']) {
       const sender = peer.screenSenders[kind];
@@ -1863,7 +1971,17 @@ function clearRemoteScreen(peer) {
 
 function handleSourceSignal(peer, data) {
   if (data.role === 'screen') {
-    if (!data.on) clearRemoteScreen(peer);
+    peer.screenOn = Boolean(data.on);
+    if (!data.on) {
+      peer.screenAudioMids.clear();
+      clearRemoteScreen(peer);
+      return;
+    }
+    flushPendingAudio(peer);
+    return;
+  }
+  if (data.role === 'share-audio') {
+    handleShareAudioSource(peer, data);
     return;
   }
   if (data.role === 'mic') {
@@ -1988,10 +2106,11 @@ function openFloatWindow() {
 
 function replaceRemoteTrack(peer, track) {
   if (!peer.stream) peer.stream = new MediaStream();
-  for (const existing of peer.stream.getTracks()) {
-    if (existing.kind === track.kind || existing.readyState === 'ended') {
-      peer.stream.removeTrack(existing);
-    }
+  for (const existing of [...peer.stream.getTracks()]) {
+    if (existing === track) return;
+    const ended = existing.readyState === 'ended';
+    const replaceVideo = track.kind === 'video' && existing.kind === 'video';
+    if (ended || replaceVideo) peer.stream.removeTrack(existing);
   }
   peer.stream.addTrack(track);
 }
@@ -2239,8 +2358,11 @@ function ensurePeer(id, name) {
     micSender: null,
     cameraMids: new Set(),
     micMids: new Set(),
+    screenAudioMids: new Set(),
+    screenOn: false,
     cameraTracks: new Map(),
     pendingVideos: new Map(),
+    pendingAudios: new Map(),
     trackMids: new Map(),
     voiceVolume: 1,
     voiceMuted: false,
@@ -2290,12 +2412,8 @@ function ensurePeer(id, name) {
     const mid = transceiver && transceiver.mid != null ? String(transceiver.mid) : '';
     if (mid) state.trackMids.set(track, mid);
     if (track.kind === 'audio') {
-      if (shouldTreatAsMic(state, mid, track) || !isLive(state.pane)) {
-        if (mid) state.micMids.add(mid);
-        attachRemoteMic(state, mid, track);
-        return;
-      }
-      attachDisplayAudio(track);
+      routeRemoteAudio(state, mid, track);
+      return;
     }
     if (shouldTreatAsCamera(state, mid, track)) {
       addRemoteCamera(state, mid, track);
@@ -2325,11 +2443,7 @@ function ensurePeer(id, name) {
       preferMicCodecs(pc);
       await pc.setLocalDescription();
       sendSignal(id, { type: 'sdp', description: pc.localDescription });
-      if (cameraTrack()) signalCameraToPeer(state, true);
-      if (micTrack()) {
-        signalMicToPeer(state, true);
-        applyMicQuality(state);
-      }
+      signalMediaRoles(state);
     } catch (err) {
       console.error(err);
       showRoomError('Could not negotiate the connection.');
@@ -2457,17 +2571,9 @@ async function handleSignal(from, data) {
   if (description.type === 'offer') {
     await pc.setLocalDescription();
     sendSignal(from, { type: 'sdp', description: pc.localDescription });
-    if (cameraTrack()) signalCameraToPeer(peer, true);
-    if (micTrack()) {
-      signalMicToPeer(peer, true);
-      applyMicQuality(peer);
-    }
+    signalMediaRoles(peer);
   } else {
-    if (cameraTrack()) signalCameraToPeer(peer, true);
-    if (micTrack()) {
-      signalMicToPeer(peer, true);
-      applyMicQuality(peer);
-    }
+    signalMediaRoles(peer);
   }
 }
 
