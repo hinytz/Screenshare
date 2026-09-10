@@ -1,8 +1,8 @@
 # Screenshare
 
-Self-hosted WebRTC screenshare in named password rooms. Join or create a room, pick a display name, and share. Everyone in the room can share at the same time (screen + system/tab audio when the browser allows it). Voice is captured on join, muted until you unmute. Rooms hold at most five people.
+Self-hosted WebRTC screenshare in named password rooms. Enter a room name and password, then a display name, and share. Created rooms get a random 4-letter tag (`friends#trgf`) so the same name can exist more than once. Everyone in the room can share at the same time (screen + system/tab audio when the browser allows it). Voice is captured on join, muted until you unmute. Rooms hold at most five people.
 
-The server only serves the page, stores rooms in SQLite, and relays signaling. Video and audio go peer-to-peer. Google public STUN is used by default. Home does not list rooms; you join by name and password.
+The server only serves the page, stores rooms in SQLite, and relays signaling. Video and audio go peer-to-peer. Google public STUN is used by default. Home does not list rooms; you join by `name#tag` (or just the name for a permanent room).
 
 **[screenshare.hinytz.com](https://screenshare.hinytz.com) is a private instance.** It is not open to the public. Clone this repo and run your own.
 
@@ -23,7 +23,7 @@ npm start
 
 Open http://localhost:3000 in as many browsers as you want. Screen capture works on `localhost` without HTTPS.
 
-SQLite lives at `data/rooms.sqlite` (created on first run, gitignored). Permanent rooms from `PERMANENT_ROOMS` are upserted on boot. Empty ephemeral rooms are deleted a few seconds after the last person leaves. Refreshing does not wipe a room.
+SQLite lives at `data/rooms.sqlite` (created on first run, gitignored). Permanent rooms from `PERMANENT_ROOMS` are upserted on boot and never expire. Other rooms last 5 days after the last login, then are deleted. Refreshing does not wipe a room.
 
 ## Dokploy
 
@@ -40,7 +40,7 @@ SQLite lives at `data/rooms.sqlite` (created on first run, gitignored). Permanen
 | `PORT` | No | Defaults to `3000` |
 | `ICE_SERVERS` | No | JSON array of ICE servers if you later add TURN |
 
-Signaling uses ordinary HTTP (`/api/stream` and `/api/signal`), so Cloudflare and Traefik do not need WebSocket support. `GET /health` returns `ok`.
+Signaling uses ordinary HTTP (`/api/stream` and `/api/signal`). Room chat uses Socket.IO on `/socket.io` (WebSocket, with HTTP long-polling fallback). Allow WebSocket upgrades on that path if you put Cloudflare or Traefik in front. `GET /health` returns `ok`.
 
 Leave **Publish Directory** empty. This is a Node app, not a static site.
 
@@ -62,7 +62,7 @@ Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. A packag
 
 ## Notes
 
-- Each room is mesh WebRTC, capped at five people. Usernames are unique in that room while you are in it. Permanent rooms keep you signed in (refresh or come back later) until you hit Leave.
+- Each room is mesh WebRTC, capped at five people. Usernames are unique in that room while you are in it. Join ephemeral rooms as `name#tag`. Rooms keep you signed in on refresh until you hit Leave. If a temporary room has expired, you land back on home. The room creator can remove people and delete chat messages. Chat keeps the last 50 messages in SQLite and drops them when the room is deleted. The interface is English or Português (Brasil).
 - Voice starts muted. Unmute from the mic menu; speaking is gated by the voice activity slider. Screen-share audio and voice volume are independent.
 - Chrome and Edge on Windows can include tab or system audio from the share picker. Firefox and Safari often send video only.
 - Google STUN is enough for most home networks. Symmetric NAT or locked-down networks may need a TURN server in `ICE_SERVERS`.

@@ -45,6 +45,13 @@
         color: #7a7a7a;
       }
 
+      .float-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        -webkit-app-region: no-drag;
+      }
+
       .float-head button {
         -webkit-app-region: no-drag;
         font: inherit;
@@ -60,6 +67,11 @@
 
       .float-head button:hover {
         background: #141414;
+      }
+
+      .float-head button[aria-pressed="true"] {
+        color: #6b9fff;
+        background: #141c28;
       }
 
       #cams {
@@ -100,13 +112,25 @@
   <body>
     <header class="float-head">
       <span>Cameras</span>
-      <button id="close" type="button">Close</button>
+      <div class="float-actions">
+        <button id="self-toggle" type="button" hidden>Show my camera</button>
+        <button id="close" type="button">Close</button>
+      </div>
     </header>
     <div id="cams"></div>
-    <p id="empty">No remote cameras</p>
+    <p id="empty">No cameras</p>
     <script>
       document.getElementById('close').addEventListener('click', () => {
         window.close();
+      });
+      document.getElementById('self-toggle').addEventListener('click', () => {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'float-toggle-self-cam' }, location.origin);
+          }
+        } catch {
+          // opener gone
+        }
       });
       function notifyOpener() {
         try {
