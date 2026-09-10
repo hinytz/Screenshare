@@ -335,13 +335,16 @@ const stmtUpsertPermanent = db.prepare(`
     display_name = excluded.display_name,
     password_hash = excluded.password_hash,
     permanent = 1,
-    tag = '',
-    owner_user_id = NULL
+    tag = ''
 `);
 const stmtTouchRoom = db.prepare('UPDATE rooms SET last_join_at = ? WHERE name_key = ?');
 const stmtClaimCreator = db.prepare(`
   UPDATE rooms SET creator_username_key = ?
   WHERE name_key = ? AND permanent = 0 AND creator_username_key = ''
+`);
+const stmtClaimPermanentOwner = db.prepare(`
+  UPDATE rooms SET owner_user_id = ?
+  WHERE name_key = ? AND permanent = 1 AND owner_user_id IS NULL
 `);
 const stmtExpiredRooms = db.prepare(`
   SELECT name_key FROM rooms WHERE permanent = 0 AND last_join_at IS NOT NULL AND last_join_at < ?
@@ -740,6 +743,7 @@ function restoreMember(token) {
   if (!session.peer_id) {
     rememberSession(token, room, { display: session.username, key: session.username_key }, session.user_id, peerId);
   }
+  room = claimPermanentOwner(room, session.user_id);
   touchRoom(room.name_key);
   return { member, room };
 }
@@ -812,6 +816,12 @@ async function verifyTurnstile(token, ip) {
   return Boolean(data && data.success);
 }
 
+function claimPermanentOwner(room, userId) {
+  if (!room || !room.permanent || !userId || room.owner_user_id) return room;
+  stmtClaimPermanentOwner.run(userId, room.name_key);
+  return stmtGetRoom.get(room.name_key) || room;
+}
+
 function isCreator(room, member, user) {
   if (!room || !member) return false;
   if (user && room.owner_user_id && Number(room.owner_user_id) === Number(user.id)) return true;
@@ -866,6 +876,7 @@ const addMemberTx = db.transaction((room, username, previousToken, userId) => {
     stmtClaimCreator.run(username.key, room.name_key);
     room = stmtGetRoom.get(room.name_key) || room;
   }
+  room = claimPermanentOwner(room, userId);
   touchRoom(room.name_key);
   if (userId) touchAccount(userId);
   return { token, peerId, previous, room };
