@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <script>
+      if (window.screenshareDesktop) document.documentElement.classList.add('is-desktop');
+    </script>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
@@ -15,6 +18,57 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div class="app-frame">
+    <aside id="pin-rail" class="pin-rail" hidden>
+      <div id="pin-list" class="pin-list">
+        <button type="button" id="pin-add-btn" class="pin-add-btn" aria-label="Join room" data-i18n-aria="join_room" aria-haspopup="dialog" aria-expanded="false" aria-controls="room-modal">
+          <span class="pin-face pin-add-face">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4V20M20 12H4"/>
+            </svg>
+          </span>
+        </button>
+      </div>
+      <div class="pin-user">
+        <button type="button" id="account-avatar-btn" class="account-avatar-btn bar-tip" hidden aria-label="Account" data-i18n-aria="account" aria-expanded="false" aria-controls="account-menu">
+          <img id="account-avatar-img" alt="" hidden />
+          <span id="account-avatar-letter"></span>
+        </button>
+        <div id="account-menu" class="account-menu" hidden>
+          <div class="account-menu-warn">
+            <p data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
+          </div>
+          <button type="button" id="account-upload-btn">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18.75 15.5L18.75 21.5"/>
+              <circle cx="7.25" cy="7.5" r="1.5"/>
+              <path d="M21.2494 11C21.2417 7.18021 21.1423 5.17483 19.8588 3.89124C18.4675 2.5 16.2283 2.5 11.75 2.5C7.27166 2.5 5.03249 2.5 3.64124 3.89124C2.25 5.28249 2.25 7.52166 2.25 12C2.25 16.4783 2.25 18.7175 3.64124 20.1088C5.03249 21.5 7.27166 21.5 11.75 21.5C12.4731 21.5 13.1378 21.5 13.75 21.4941"/>
+              <path d="M14.7518 12.2394C11.0125 13.2304 7.97174 17.1177 5.16797 20.5"/>
+              <path d="M15.75 17.5C15.75 17.5 17.9595 14.5 18.75 14.5C19.5406 14.5 21.75 17.5 21.75 17.5"/>
+            </svg>
+            <span data-i18n="upload_avatar">Upload avatar</span>
+          </button>
+          <button type="button" id="account-logout-btn">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.39267 4.00087C4 4.61597 4 5.41166 4 7.00304V16.997C4 18.5883 4 19.384 4.39267 19.9991C4.46279 20.109 4.5414 20.2132 4.62777 20.3108C5.11144 20.8572 5.87666 21.0758 7.4071 21.513C8.9414 21.9513 9.70856 22.1704 10.264 21.8417C10.3604 21.7847 10.45 21.7171 10.5313 21.6402C11 21.1965 11 20.3988 11 18.8034V5.19662C11 3.60122 11 2.80351 10.5313 2.35982C10.45 2.28288 10.3604 2.21527 10.264 2.15827C9.70856 1.82956 8.9414 2.0487 7.4071 2.48699C5.87666 2.92418 5.11144 3.14278 4.62777 3.68925C4.5414 3.78684 4.46279 3.89103 4.39267 4.00087Z"/>
+              <path d="M11 4H13.0171C14.9188 4 15.8696 4 16.4604 4.58579C16.7898 4.91238 16.9355 5.34994 17 6M11 20H13.0171C14.9188 20 15.8696 20 16.4604 19.4142C16.7898 19.0876 16.9355 18.6501 17 18"/>
+              <path d="M21 12H14M19.5 9.49994C19.5 9.49994 22 11.3412 22 12C22 12.6588 19.5 14.4999 19.5 14.4999"/>
+            </svg>
+            <span data-i18n="logout">Log out</span>
+          </button>
+          <button type="button" id="account-delete-btn" class="danger">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19.5 5.5L18.8803 15.5251C18.7219 18.0864 18.6428 19.3671 18.0008 20.2879C17.6833 20.7431 17.2747 21.1273 16.8007 21.416C15.8421 22 14.559 22 11.9927 22C9.42312 22 8.1383 22 7.17905 21.4149C6.7048 21.1257 6.296 20.7408 5.97868 20.2848C5.33688 19.3626 5.25945 18.0801 5.10461 15.5152L4.5 5.5"/>
+              <path d="M3 5.5H21M16.0557 5.5L15.3731 4.09173C14.9196 3.15626 14.6928 2.68852 14.3017 2.39681C14.215 2.3321 14.1231 2.27454 14.027 2.2247C13.5939 2 13.0741 2 12.0345 2C10.9688 2 10.436 2 9.99568 2.23412C9.8981 2.28601 9.80498 2.3459 9.71729 2.41317C9.32164 2.7167 9.10063 3.20155 8.65861 4.17126L8.05292 5.5"/>
+              <path d="M9.5 16.5L9.5 10.5"/>
+              <path d="M14.5 16.5L14.5 10.5"/>
+            </svg>
+            <span data-i18n="delete_account">Delete account</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+    <div class="app-main">
     <div id="login" class="view">
       <div class="home">
         <div class="lang-toggle" role="group" aria-label="Language" data-i18n-aria="language">
@@ -41,6 +95,27 @@
             rel="noreferrer"
             data-i18n="download_windows"
           >Download Windows app</a>
+          <div class="account-toggle" role="tablist" aria-label="Account" data-i18n-aria="account">
+            <button type="button" id="mode-guest" role="tab" aria-selected="true" data-i18n="guest">Continue as guest</button>
+            <button type="button" id="mode-login" role="tab" aria-selected="false" data-i18n="log_in">Log in</button>
+            <button type="button" id="mode-register" role="tab" aria-selected="false" data-i18n="register">Register</button>
+          </div>
+          <div id="account-form" hidden>
+            <label class="field" id="account-username-field">
+              <span data-i18n="username">Username</span>
+              <input id="account-username" name="account-username" type="text" autocomplete="username" minlength="2" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_]{1,31}" />
+              <p id="account-username-hint" class="home-warn" hidden data-i18n="username_hint">Letters, numbers, and underscore. 2–32 characters. Must be unique.</p>
+            </label>
+            <label class="field">
+              <span data-i18n="account_password">Password</span>
+              <input id="account-password" name="account-password" type="password" autocomplete="current-password" minlength="8" maxlength="200" />
+            </label>
+            <div id="turnstile-wrap" hidden>
+              <div id="turnstile-host"></div>
+            </div>
+            <p id="account-ttl-warn" class="home-warn" hidden data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
+            <button type="button" id="account-submit" data-i18n="log_in">Log in</button>
+          </div>
           <div class="mode-toggle" role="tablist" aria-label="Room action" data-i18n-aria="room_action">
             <button type="button" id="mode-join" role="tab" aria-selected="true" data-i18n="join">Join</button>
             <button type="button" id="mode-create" role="tab" aria-selected="false" data-i18n="create">Create</button>
@@ -71,9 +146,13 @@
                 autocomplete="current-password"
               />
             </label>
-            <p id="create-ttl-warn" class="home-warn" hidden data-i18n="create_ttl">
-              Rooms are deleted 5 days after the last login.
-            </p>
+            <div id="permanent-field" class="perm-toggle" hidden role="tablist" aria-label="Room duration" data-i18n-aria="room_duration">
+              <button type="button" id="mode-temporary" role="tab" aria-selected="true" data-i18n="temporary_room">Temporary</button>
+              <button type="button" id="mode-permanent" role="tab" aria-selected="false" data-i18n="permanent_room">Permanent</button>
+            </div>
+            <div id="create-ttl-warn" class="notice-card" hidden>
+              <p data-i18n="create_ttl">Rooms are deleted 5 days after the last login.</p>
+            </div>
           </div>
           <div id="home-step-user" hidden>
             <p id="home-room-heading" class="home-room-heading"></p>
@@ -172,6 +251,17 @@
             </label>
           </div>
         </div>
+        <button
+          type="button"
+          id="room-icon-btn"
+          class="room-icon-btn bar-tip"
+          hidden
+          aria-label="Upload room icon"
+          data-i18n-aria="upload_room_icon"
+        >
+          <span class="room-icon-dash" aria-hidden="true"></span>
+          <img id="room-icon-img" alt="" hidden />
+        </button>
         <button
           type="button"
           id="room-label"
@@ -276,8 +366,81 @@
         </div>
       </div>
     </div>
+    </div>
+    </div>
+    <div id="cropper" class="cropper" hidden>
+      <div class="cropper-card">
+        <p id="cropper-title" class="wordmark" data-i18n="crop_image">Crop image</p>
+        <div id="cropper-stage" class="cropper-stage">
+          <img id="cropper-image" alt="" />
+        </div>
+        <label class="field">
+          <input id="cropper-zoom" type="range" min="100" max="300" value="100" />
+        </label>
+        <div class="cropper-actions">
+          <button type="button" id="cropper-cancel" data-i18n="cancel">Cancel</button>
+          <button type="button" id="cropper-confirm" data-i18n="confirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+    <div id="room-modal" class="room-modal" hidden role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
+      <div class="room-modal-card">
+        <header class="room-modal-head">
+          <p id="room-modal-title" class="wordmark" data-i18n="join_or_create">Join or create a room</p>
+          <button type="button" id="room-modal-close" class="room-modal-close" aria-label="Close" data-i18n-aria="close">&times;</button>
+        </header>
+        <form id="room-modal-form" autocomplete="off">
+          <div class="mode-toggle" role="tablist" aria-label="Room action" data-i18n-aria="room_action">
+            <button type="button" id="modal-mode-join" role="tab" aria-selected="true" data-i18n="join">Join</button>
+            <button type="button" id="modal-mode-create" role="tab" aria-selected="false" data-i18n="create">Create</button>
+          </div>
+          <label class="field">
+            <span data-i18n="room">Room</span>
+            <input id="modal-room-name" name="modal-room" type="text" required minlength="2" maxlength="37" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span data-i18n="password">Password</span>
+            <input id="modal-room-password" name="modal-password" type="password" required autocomplete="current-password" />
+          </label>
+          <div id="modal-permanent-field" class="perm-toggle" hidden role="tablist" aria-label="Room duration" data-i18n-aria="room_duration">
+            <button type="button" id="modal-mode-temporary" role="tab" aria-selected="true" data-i18n="temporary_room">Temporary</button>
+            <button type="button" id="modal-mode-permanent" role="tab" aria-selected="false" data-i18n="permanent_room">Permanent</button>
+          </div>
+          <div id="modal-create-ttl" class="notice-card" hidden>
+            <p data-i18n="create_ttl">Rooms are deleted 5 days after the last login.</p>
+          </div>
+          <button type="submit" id="modal-room-submit" data-i18n="enter">Enter</button>
+          <p id="modal-room-error" class="error" hidden></p>
+        </form>
+      </div>
+    </div>
+    <input id="image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
+    <div id="pin-tip" class="pin-tip" hidden>
+      <span class="pin-tip-mark" aria-hidden="true">
+        <svg class="hi" viewBox="0 0 24 24">
+          <path d="M3 21L8 16"/>
+          <path d="M13.2585 18.8714C9.51516 18.0215 5.97844 14.4848 5.12853 10.7415C4.99399 10.1489 4.92672 9.85266 5.12161 9.37197C5.3165 8.89129 5.55457 8.74255 6.03071 8.44509C7.10705 7.77265 8.27254 7.55888 9.48209 7.66586C11.1793 7.81598 12.0279 7.89104 12.4512 7.67048C12.8746 7.44991 13.1622 6.93417 13.7376 5.90269L14.4664 4.59604C14.9465 3.73528 15.1866 3.3049 15.7513 3.10202C16.316 2.89913 16.6558 3.02199 17.3355 3.26771C18.9249 3.84236 20.1576 5.07505 20.7323 6.66449C20.978 7.34417 21.1009 7.68401 20.898 8.2487C20.6951 8.8134 20.2647 9.05346 19.4039 9.53358L18.0672 10.2792C17.0376 10.8534 16.5229 11.1406 16.3024 11.568C16.0819 11.9955 16.162 12.8256 16.3221 14.4859C16.4399 15.7068 16.2369 16.88 15.5555 17.9697C15.2577 18.4458 15.1088 18.6839 14.6283 18.8786C14.1477 19.0733 13.8513 19.006 13.2585 18.8714Z"/>
+        </svg>
+      </span>
+      <span id="pin-tip-name" class="pin-tip-name"></span>
+      <button type="button" id="pin-tip-pin" class="pin-tip-pin bar-tip" hidden aria-label="Pin room" data-i18n-aria="pin_room">
+        <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 21L8 16"/>
+          <path d="M13.2585 18.8714C9.51516 18.0215 5.97844 14.4848 5.12853 10.7415C4.99399 10.1489 4.92672 9.85266 5.12161 9.37197C5.3165 8.89129 5.55457 8.74255 6.03071 8.44509C7.10705 7.77265 8.27254 7.55888 9.48209 7.66586C11.1793 7.81598 12.0279 7.89104 12.4512 7.67048C12.8746 7.44991 13.1622 6.93417 13.7376 5.90269L14.4664 4.59604C14.9465 3.73528 15.1866 3.3049 15.7513 3.10202C16.316 2.89913 16.6558 3.02199 17.3355 3.26771C18.9249 3.84236 20.1576 5.07505 20.7323 6.66449C20.978 7.34417 21.1009 7.68401 20.898 8.2487C20.6951 8.8134 20.2647 9.05346 19.4039 9.53358L18.0672 10.2792C17.0376 10.8534 16.5229 11.1406 16.3024 11.568C16.0819 11.9955 16.162 12.8256 16.3221 14.4859C16.4399 15.7068 16.2369 16.88 15.5555 17.9697C15.2577 18.4458 15.1088 18.6839 14.6283 18.8786C14.1477 19.0733 13.8513 19.006 13.2585 18.8714Z"/>
+        </svg>
+      </button>
+      <button type="button" id="pin-tip-unpin" class="pin-tip-unpin bar-tip" aria-label="Unpin room" data-i18n-aria="unpin_room">
+        <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7.5 8C6.95863 8.1281 6.49932 8.14239 5.99268 8.45891C5.07234 9.03388 4.85108 9.71674 5.08821 10.7612C5.94028 14.5139 9.48599 18.0596 13.2388 18.9117C14.2834 19.1489 14.9661 18.928 15.5416 18.0077C15.8411 17.5288 15.8716 17.0081 16 16.5"/>
+          <path d="M12 7.79915C12.1776 7.77794 12.3182 7.74034 12.4295 7.68235C13.3997 7.17686 13.9291 5.53361 14.4498 4.60009C14.9311 3.73715 15.1718 3.30567 15.7379 3.10227C16.3041 2.89888 16.6448 3.02205 17.3262 3.26839C18.9197 3.8445 20.1555 5.08032 20.7316 6.6738C20.9779 7.35521 21.1011 7.69591 20.8977 8.26204C20.6943 8.82817 20.2628 9.06884 19.3999 9.55018C18.4608 10.074 16.7954 10.6108 16.2905 11.5898C16.2345 11.6983 16.1978 11.8327 16.1769 12"/>
+          <path d="M3 21L8 16"/>
+          <path d="M3 3L21 21"/>
+        </svg>
+      </button>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script type="importmap">{"imports":{"./i18n.js":"/i18n.js"}}</script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

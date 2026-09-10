@@ -1,6 +1,6 @@
 {
   "name": "screenshare-desktop",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "description": "Windows Screenshare client with native window audio",
   "main": "main.js",
@@ -10,10 +10,11 @@
     "build:helper": "dotnet publish native/LoopbackCapture/LoopbackCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/dist",
     "rebuild:native": "electron-rebuild -f -w electron-native-screenshare",
     "bump": "node scripts/bump-version.js",
-    "pack": "node scripts/bump-version.js patch && npm run rebuild:native && npm run build:helper && electron-builder --win",
-    "pack:same": "npm run rebuild:native && npm run build:helper && electron-builder --win",
-    "release": "node scripts/bump-version.js patch && npm run rebuild:native && npm run build:helper && electron-builder --win --publish always",
-    "release:same": "npm run rebuild:native && npm run build:helper && electron-builder --win --publish always"
+    "postinstall": "node scripts/patch-wine-vm.js",
+    "pack": "node scripts/bump-version.js patch && npm run rebuild:native && npm run build:helper && node scripts/patch-wine-vm.js && electron-builder --win",
+    "pack:same": "npm run rebuild:native && npm run build:helper && node scripts/patch-wine-vm.js && electron-builder --win",
+    "release": "node scripts/bump-version.js patch && npm run rebuild:native && npm run build:helper && node scripts/patch-wine-vm.js && node scripts/github-release.js ensure && electron-builder --win --publish always && node scripts/github-release.js publish",
+    "release:same": "npm run rebuild:native && npm run build:helper && node scripts/patch-wine-vm.js && node scripts/github-release.js ensure && electron-builder --win --publish always && node scripts/github-release.js publish"
   },
   "engines": {
     "node": ">=20"

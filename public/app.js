@@ -14,6 +14,56 @@ const home = document.querySelector('.home');
 const homeStepRoom = document.getElementById('home-step-room');
 const homeStepUser = document.getElementById('home-step-user');
 const createTtlWarn = document.getElementById('create-ttl-warn');
+const permanentField = document.getElementById('permanent-field');
+const modeTemporary = document.getElementById('mode-temporary');
+const modePermanent = document.getElementById('mode-permanent');
+const modeGuest = document.getElementById('mode-guest');
+const modeLogin = document.getElementById('mode-login');
+const modeRegister = document.getElementById('mode-register');
+const accountForm = document.getElementById('account-form');
+const accountPassword = document.getElementById('account-password');
+const accountUsername = document.getElementById('account-username');
+const accountUsernameHint = document.getElementById('account-username-hint');
+const accountSubmit = document.getElementById('account-submit');
+const accountTtlWarn = document.getElementById('account-ttl-warn');
+const turnstileWrap = document.getElementById('turnstile-wrap');
+const turnstileHost = document.getElementById('turnstile-host');
+const pinRail = document.getElementById('pin-rail');
+const pinList = document.getElementById('pin-list');
+const pinTip = document.getElementById('pin-tip');
+const pinTipName = document.getElementById('pin-tip-name');
+const pinTipUnpin = document.getElementById('pin-tip-unpin');
+const pinTipPin = document.getElementById('pin-tip-pin');
+const pinAddBtn = document.getElementById('pin-add-btn');
+const roomModal = document.getElementById('room-modal');
+const roomModalForm = document.getElementById('room-modal-form');
+const roomModalClose = document.getElementById('room-modal-close');
+const modalModeJoin = document.getElementById('modal-mode-join');
+const modalModeCreate = document.getElementById('modal-mode-create');
+const modalRoomName = document.getElementById('modal-room-name');
+const modalRoomPassword = document.getElementById('modal-room-password');
+const modalCreateTtl = document.getElementById('modal-create-ttl');
+const modalPermanentField = document.getElementById('modal-permanent-field');
+const modalModeTemporary = document.getElementById('modal-mode-temporary');
+const modalModePermanent = document.getElementById('modal-mode-permanent');
+const modalRoomSubmit = document.getElementById('modal-room-submit');
+const modalRoomError = document.getElementById('modal-room-error');
+const accountAvatarBtn = document.getElementById('account-avatar-btn');
+const accountAvatarImg = document.getElementById('account-avatar-img');
+const accountAvatarLetter = document.getElementById('account-avatar-letter');
+const accountMenu = document.getElementById('account-menu');
+const accountUploadBtn = document.getElementById('account-upload-btn');
+const accountLogoutBtn = document.getElementById('account-logout-btn');
+const accountDeleteBtn = document.getElementById('account-delete-btn');
+const roomIconBtn = document.getElementById('room-icon-btn');
+const roomIconImg = document.getElementById('room-icon-img');
+const cropper = document.getElementById('cropper');
+const cropperImage = document.getElementById('cropper-image');
+const cropperStage = document.getElementById('cropper-stage');
+const cropperZoom = document.getElementById('cropper-zoom');
+const cropperCancel = document.getElementById('cropper-cancel');
+const cropperConfirm = document.getElementById('cropper-confirm');
+const imageFile = document.getElementById('image-file');
 const langEn = document.getElementById('lang-en');
 const langPt = document.getElementById('lang-pt');
 const roomLabel = document.getElementById('room-label');
@@ -97,11 +147,26 @@ let roomQueue = Promise.resolve();
 let myId = null;
 let myName = '';
 let homeMode = 'join';
+let homePermanent = false;
+let modalPermanentOn = false;
 let homeStep = 'room';
 let pendingHome = { name: '', password: '' };
 let currentRoomLabel = '';
 let copyRoomTimer = null;
 let iAmCreator = false;
+let canEditIcon = false;
+let currentNameKey = '';
+let currentIconUrl = '';
+let accountUser = null;
+let accountPins = [];
+let homeAuth = 'guest';
+let turnstileSiteKey = '';
+let turnstileWidgetId = null;
+let cropJob = null;
+const IMAGE_MAX_PX = 2000;
+let pinTipTimer = 0;
+let pinTipKey = '';
+let modalRoomMode = 'join';
 let leavingRoom = false;
 let chatSocket = null;
 let chatOpen = false;
@@ -130,6 +195,7 @@ let micDest = null;
 let micSink = null;
 let micVadRaf = 0;
 let micStarting = false;
+let micStartPromise = null;
 let micDenied = false;
 let voiceCtx = null;
 let voicePeerId = null;
@@ -182,9 +248,9 @@ function setHomeStep(step) {
   if (homeRoomHeading) {
     homeRoomHeading.textContent = homeStep === 'user' ? (pendingHome.name || roomNameInput.value.trim()) : '';
   }
-  roomNameInput.required = homeStep === 'room';
-  passwordInput.required = homeStep === 'room';
-  usernameInput.required = homeStep === 'user';
+  roomNameInput.required = homeStep === 'room' && homeAuth === 'guest';
+  passwordInput.required = homeStep === 'room' && homeAuth === 'guest';
+  usernameInput.required = homeStep === 'user' && !accountUser;
   loginBtn.textContent = homeStep === 'user' ? t('enter') : t('continue');
   if (!loginView.hidden) {
     if (homeStep === 'user') usernameInput.focus();
@@ -192,13 +258,744 @@ function setHomeStep(step) {
   }
 }
 
+function setHomePermanent(on) {
+  homePermanent = Boolean(on);
+  if (modeTemporary) modeTemporary.setAttribute('aria-selected', homePermanent ? 'false' : 'true');
+  if (modePermanent) modePermanent.setAttribute('aria-selected', homePermanent ? 'true' : 'false');
+  setHomeMode(homeMode);
+}
+
 function setHomeMode(mode) {
   homeMode = mode === 'create' ? 'create' : 'join';
   modeJoin.setAttribute('aria-selected', homeMode === 'join' ? 'true' : 'false');
   modeCreate.setAttribute('aria-selected', homeMode === 'create' ? 'true' : 'false');
-  if (createTtlWarn) createTtlWarn.hidden = homeMode !== 'create' || homeStep !== 'room';
+  if (createTtlWarn) {
+    const perm = Boolean(accountUser && homePermanent);
+    createTtlWarn.hidden = homeMode !== 'create' || homeStep !== 'room' || perm;
+  }
+  if (permanentField) {
+    permanentField.hidden = homeMode !== 'create' || homeStep !== 'room' || !accountUser;
+  }
   if (homeStep === 'room') loginBtn.textContent = t('continue');
   roomNameInput.placeholder = homeMode === 'join' ? t('room_placeholder') : '';
+}
+
+function letterFor(name) {
+  const raw = String(name || '').replace(/^@/, '').trim();
+  return (raw[0] || '?').toUpperCase();
+}
+
+function setHomeAuth(mode) {
+  homeAuth = accountUser ? 'guest' : (mode === 'login' || mode === 'register' ? mode : 'guest');
+  if (home) home.dataset.auth = homeAuth;
+  if (home) home.dataset.signed = accountUser ? 'true' : 'false';
+  if (modeGuest) modeGuest.setAttribute('aria-selected', homeAuth === 'guest' ? 'true' : 'false');
+  if (modeLogin) modeLogin.setAttribute('aria-selected', homeAuth === 'login' ? 'true' : 'false');
+  if (modeRegister) modeRegister.setAttribute('aria-selected', homeAuth === 'register' ? 'true' : 'false');
+  if (accountForm) accountForm.hidden = Boolean(accountUser) || homeAuth === 'guest';
+  if (accountUsernameHint) accountUsernameHint.hidden = homeAuth !== 'register';
+  if (accountSubmit) accountSubmit.textContent = t(homeAuth === 'register' ? 'register' : 'log_in');
+  if (accountTtlWarn) accountTtlWarn.hidden = homeAuth !== 'register';
+  if (accountPassword) {
+    accountPassword.autocomplete = homeAuth === 'register' ? 'new-password' : 'current-password';
+  }
+  syncTurnstile();
+  if (usernameInput) usernameInput.required = homeStep === 'user' && !accountUser;
+  if (roomNameInput) roomNameInput.required = homeStep === 'room' && homeAuth === 'guest';
+  if (passwordInput) passwordInput.required = homeStep === 'room' && homeAuth === 'guest';
+}
+
+function isPopOpen(el) {
+  return Boolean(el && el.classList.contains('is-open'));
+}
+
+const popCloseTimers = new WeakMap();
+const POP_MS = 180;
+
+function popDuration() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : POP_MS;
+}
+
+function setPopOpen(el, open) {
+  if (!el) return false;
+  const next = Boolean(open);
+  const pending = popCloseTimers.get(el);
+  if (pending) {
+    clearTimeout(pending);
+    popCloseTimers.delete(el);
+  }
+  if (next) {
+    el.hidden = false;
+    void el.offsetWidth;
+    el.classList.add('is-open');
+    return true;
+  }
+  el.classList.remove('is-open');
+  if (el.hidden) return false;
+  const timer = window.setTimeout(() => {
+    if (!el.classList.contains('is-open')) el.hidden = true;
+    popCloseTimers.delete(el);
+  }, popDuration());
+  popCloseTimers.set(el, timer);
+  return false;
+}
+
+function setAccountMenu(open) {
+  if (!accountMenu || !accountAvatarBtn) return;
+  setPopOpen(accountMenu, open);
+  accountAvatarBtn.setAttribute('aria-expanded', isPopOpen(accountMenu) ? 'true' : 'false');
+}
+
+function renderAccountAvatar() {
+  if (!accountAvatarBtn) return;
+  const logged = Boolean(accountUser);
+  accountAvatarBtn.hidden = !logged;
+  if (!logged) {
+    setAccountMenu(false);
+    return;
+  }
+  if (accountAvatarImg) {
+    if (accountUser.avatarUrl) {
+      accountAvatarImg.src = accountUser.avatarUrl;
+      accountAvatarImg.hidden = false;
+    } else {
+      accountAvatarImg.removeAttribute('src');
+      accountAvatarImg.hidden = true;
+    }
+  }
+  if (accountAvatarLetter) {
+    accountAvatarLetter.hidden = Boolean(accountUser.avatarUrl);
+    accountAvatarLetter.textContent = letterFor(accountUser.username);
+  }
+}
+
+function hidePinTip() {
+  pinTipKey = '';
+  if (pinTipTimer) {
+    clearTimeout(pinTipTimer);
+    pinTipTimer = 0;
+  }
+  if (pinTip) {
+    pinTip.hidden = true;
+    pinTip.dataset.nameOnly = 'false';
+    pinTip.dataset.pinned = 'true';
+  }
+  if (pinTipUnpin) pinTipUnpin.hidden = false;
+  if (pinTipPin) pinTipPin.hidden = true;
+}
+
+function placePinTip(btn) {
+  if (!pinTip || !btn || pinTip.hidden) return;
+  const rect = btn.getBoundingClientRect();
+  const pad = 8;
+  const gap = 8;
+  pinTip.style.top = `${pad}px`;
+  pinTip.style.left = `${Math.round(rect.right + gap)}px`;
+  const tipW = pinTip.offsetWidth;
+  const tipH = pinTip.offsetHeight;
+  let top = rect.top + (rect.height - tipH) / 2;
+  top = Math.max(pad, Math.min(top, window.innerHeight - tipH - pad));
+  let left = rect.right + gap;
+  if (left + tipW > window.innerWidth - pad) {
+    left = Math.max(pad, rect.left - tipW - gap);
+  }
+  pinTip.style.top = `${Math.round(top)}px`;
+  pinTip.style.left = `${Math.round(left)}px`;
+}
+
+function showPinTip(btn, pin, options = {}) {
+  if (!pinTip || !pinTipName || !pin) return;
+  if (pinTipTimer) {
+    clearTimeout(pinTipTimer);
+    pinTipTimer = 0;
+  }
+  const nameOnly = Boolean(options.nameOnly);
+  const pinned = !nameOnly && pin.pinned !== false;
+  pinTip.dataset.nameOnly = nameOnly ? 'true' : 'false';
+  pinTip.dataset.pinned = pinned ? 'true' : 'false';
+  if (pinTipUnpin) pinTipUnpin.hidden = nameOnly || !pinned;
+  if (pinTipPin) pinTipPin.hidden = nameOnly || pinned;
+  pinTipKey = pin.nameKey;
+  pinTipName.textContent = pin.label;
+  pinTip.hidden = false;
+  placePinTip(btn);
+  requestAnimationFrame(() => placePinTip(btn));
+}
+
+function delayHidePinTip() {
+  if (pinTipTimer) clearTimeout(pinTipTimer);
+  pinTipTimer = window.setTimeout(() => {
+    hidePinTip();
+  }, 140);
+}
+
+function railRooms() {
+  const rooms = accountPins.map((pin) => ({ ...pin, pinned: pin.pinned !== false }));
+  if (accountUser && currentNameKey && !roomView.hidden) {
+    const seated = rooms.some((pin) => pin.nameKey === currentNameKey);
+    if (!seated) {
+      rooms.push({
+        nameKey: currentNameKey,
+        label: currentRoomLabel || currentNameKey,
+        iconUrl: currentIconUrl || '',
+        pinned: false,
+      });
+    }
+  }
+  return rooms;
+}
+
+function renderPins() {
+  if (!pinRail || !pinList) return;
+  const logged = Boolean(accountUser);
+  pinRail.hidden = !logged;
+  if (!logged) {
+    hidePinTip();
+    setRoomModal(false);
+    pinList.replaceChildren(...(pinAddBtn ? [pinAddBtn] : []));
+    renderAccountAvatar();
+    return;
+  }
+  const rooms = railRooms();
+  const pins = rooms.map((pin) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pin-btn';
+    btn.dataset.nameKey = pin.nameKey;
+    btn.dataset.pinned = pin.pinned ? 'true' : 'false';
+    btn.setAttribute('aria-label', pin.label);
+    btn.setAttribute('aria-current', pin.nameKey === currentNameKey ? 'true' : 'false');
+    const face = document.createElement('span');
+    face.className = 'pin-face';
+    if (pin.iconUrl) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = pin.iconUrl;
+      face.append(img);
+    } else {
+      face.textContent = letterFor(pin.label);
+    }
+    btn.append(face);
+    btn.addEventListener('click', () => rejoinPinned(pin));
+    btn.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      hidePinTip();
+      if (pin.pinned) unpinRoom(pin.nameKey);
+      else pinRoom(pin.nameKey);
+    });
+    btn.addEventListener('pointerenter', () => showPinTip(btn, pin));
+    btn.addEventListener('pointerleave', () => delayHidePinTip());
+    return btn;
+  });
+  if (pinAddBtn) pins.push(pinAddBtn);
+  pinList.replaceChildren(...pins);
+  if (pinTipKey && pinTipKey !== '__add__' && !rooms.some((pin) => pin.nameKey === pinTipKey)) {
+    hidePinTip();
+  }
+  renderAccountAvatar();
+}
+
+function setRoomIconButton(info) {
+  if (!roomIconBtn) return;
+  const canEdit = Boolean(info && info.canEditIcon);
+  roomIconBtn.hidden = !canEdit;
+  const url = info && info.iconUrl;
+  currentIconUrl = url || '';
+  roomIconBtn.dataset.hasIcon = url ? 'true' : 'false';
+  if (roomIconImg) {
+    if (url) {
+      roomIconImg.src = url;
+      roomIconImg.hidden = false;
+    } else {
+      roomIconImg.removeAttribute('src');
+      roomIconImg.hidden = true;
+    }
+  }
+}
+
+async function loadAccount() {
+  try {
+    const res = await fetch('/api/account', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('account');
+    const data = await res.json();
+    accountUser = data.user || null;
+    accountPins = Array.isArray(data.pins) ? data.pins : [];
+  } catch {
+    accountUser = null;
+    accountPins = [];
+  }
+  setHomeAuth(accountUser ? 'guest' : homeAuth);
+  setHomeMode(homeMode);
+  renderPins();
+}
+
+function turnstileNeeded() {
+  return homeAuth === 'register' && Boolean(turnstileSiteKey) && !accountUser;
+}
+
+function readTurnstileToken() {
+  if (!turnstileNeeded()) return '';
+  if (turnstileWidgetId == null || !window.turnstile) return '';
+  try {
+    return String(window.turnstile.getResponse(turnstileWidgetId) || '');
+  } catch {
+    return '';
+  }
+}
+
+function resetTurnstile() {
+  if (turnstileWidgetId == null || !window.turnstile) return;
+  try {
+    window.turnstile.reset(turnstileWidgetId);
+  } catch {
+    // ignore
+  }
+}
+
+function destroyTurnstile() {
+  if (turnstileWidgetId == null || !window.turnstile) {
+    turnstileWidgetId = null;
+    return;
+  }
+  try {
+    window.turnstile.remove(turnstileWidgetId);
+  } catch {
+    // ignore
+  }
+  turnstileWidgetId = null;
+}
+
+function loadTurnstileScript() {
+  if (window.turnstile) return Promise.resolve();
+  if (document.getElementById('cf-turnstile-script')) {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const wait = () => {
+        if (window.turnstile) return resolve();
+        if (Date.now() - started > 8000) return reject(new Error('turnstile'));
+        window.setTimeout(wait, 50);
+      };
+      wait();
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.id = 'cf-turnstile-script';
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('turnstile'));
+    document.head.append(script);
+  });
+}
+
+async function syncTurnstile() {
+  const show = turnstileNeeded();
+  if (turnstileWrap) turnstileWrap.hidden = !show;
+  if (!show) {
+    destroyTurnstile();
+    return;
+  }
+  if (!turnstileHost) return;
+  try {
+    await loadTurnstileScript();
+  } catch {
+    return;
+  }
+  if (!turnstileNeeded() || !window.turnstile) return;
+  if (turnstileWidgetId != null) return;
+  turnstileHost.replaceChildren();
+  turnstileWidgetId = window.turnstile.render(turnstileHost, {
+    sitekey: turnstileSiteKey,
+    theme: 'dark',
+  });
+}
+
+async function loadAuthConfig() {
+  try {
+    const res = await fetch('/api/auth/config', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    turnstileSiteKey = data && data.turnstileSiteKey ? String(data.turnstileSiteKey) : '';
+  } catch {
+    turnstileSiteKey = '';
+  }
+  syncTurnstile();
+}
+
+async function submitAccount() {
+  loginError.hidden = true;
+  const payload = {
+    username: accountUsername ? accountUsername.value : '',
+    password: accountPassword ? accountPassword.value : '',
+  };
+  if (homeAuth === 'register') {
+    const token = readTurnstileToken();
+    if (turnstileSiteKey && !token) {
+      loginError.textContent = t('captcha_fail');
+      loginError.hidden = false;
+      return;
+    }
+    if (token) payload.turnstileToken = token;
+  }
+  const path = homeAuth === 'register' ? '/api/auth/register' : '/api/auth/login';
+  accountSubmit.disabled = true;
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      loginError.textContent = await readError(res, t('account_fail'));
+      loginError.hidden = false;
+      resetTurnstile();
+      return;
+    }
+    const data = await res.json();
+    accountUser = data.user || null;
+    accountPins = Array.isArray(data.pins) ? data.pins : [];
+    if (accountPassword) accountPassword.value = '';
+    if (accountUsername) accountUsername.value = '';
+    setHomeAuth('guest');
+    setHomeMode(homeMode);
+    renderPins();
+  } catch {
+    loginError.textContent = t('could_not_reach');
+    loginError.hidden = false;
+    resetTurnstile();
+  } finally {
+    accountSubmit.disabled = false;
+  }
+}
+
+async function logoutAccount() {
+  setAccountMenu(false);
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch {
+    // still clear local
+  }
+  accountUser = null;
+  accountPins = [];
+  setHomeAuth('guest');
+  setHomeMode(homeMode);
+  renderPins();
+}
+
+async function deleteAccount() {
+  if (!window.confirm(t('delete_account_confirm'))) return;
+  setAccountMenu(false);
+  try {
+    const res = await fetch('/api/account/delete', { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok) {
+      showRoomError(await readError(res, t('could_not_reach')));
+      return;
+    }
+  } catch {
+    showRoomError(t('could_not_reach'));
+    return;
+  }
+  accountUser = null;
+  accountPins = [];
+  if (!roomView.hidden) {
+    await returnHome({ notifyServer: false });
+  }
+  setHomeAuth('guest');
+  renderPins();
+}
+
+async function rejoinPinned(pin) {
+  if (!pin || !pin.nameKey) return;
+  if (pin.nameKey === currentNameKey && !roomView.hidden) return;
+  hidePinTip();
+  try {
+    const res = await fetch('/api/rooms/rejoin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ nameKey: pin.nameKey }),
+    });
+    if (!res.ok) {
+      const message = await readError(res, t('could_not_enter'));
+      if (roomView.hidden) {
+        loginError.textContent = message;
+        loginError.hidden = false;
+      } else {
+        showRoomError(message);
+      }
+      return;
+    }
+    const info = await res.json();
+    if (!roomView.hidden) {
+      await returnHome({ notifyServer: false });
+    }
+    await enterRoom(info);
+  } catch {
+    const message = t('could_not_reach');
+    if (roomView.hidden) {
+      loginError.textContent = message;
+      loginError.hidden = false;
+    } else showRoomError(message);
+  }
+}
+
+async function pinRoom(nameKey) {
+  hidePinTip();
+  if (!nameKey) return;
+  try {
+    const res = await fetch('/api/rooms/pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ nameKey }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    accountPins = Array.isArray(data.pins) ? data.pins : accountPins;
+    renderPins();
+  } catch {
+    // ignore
+  }
+}
+
+async function unpinRoom(nameKey) {
+  hidePinTip();
+  try {
+    const res = await fetch('/api/rooms/unpin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ nameKey }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    accountPins = Array.isArray(data.pins) ? data.pins : accountPins;
+    renderPins();
+  } catch {
+    // ignore
+  }
+}
+
+function setModalRoomError(message) {
+  if (!modalRoomError) return;
+  if (!message) {
+    modalRoomError.hidden = true;
+    modalRoomError.textContent = '';
+    return;
+  }
+  modalRoomError.textContent = message;
+  modalRoomError.hidden = false;
+}
+
+function setModalPermanent(on) {
+  modalPermanentOn = Boolean(on);
+  if (modalModeTemporary) modalModeTemporary.setAttribute('aria-selected', modalPermanentOn ? 'false' : 'true');
+  if (modalModePermanent) modalModePermanent.setAttribute('aria-selected', modalPermanentOn ? 'true' : 'false');
+  setModalRoomMode(modalRoomMode);
+}
+
+function setModalRoomMode(mode) {
+  modalRoomMode = mode === 'create' ? 'create' : 'join';
+  if (modalModeJoin) modalModeJoin.setAttribute('aria-selected', modalRoomMode === 'join' ? 'true' : 'false');
+  if (modalModeCreate) modalModeCreate.setAttribute('aria-selected', modalRoomMode === 'create' ? 'true' : 'false');
+  if (modalCreateTtl) modalCreateTtl.hidden = modalRoomMode !== 'create' || modalPermanentOn;
+  if (modalPermanentField) modalPermanentField.hidden = modalRoomMode !== 'create';
+  if (modalRoomName) modalRoomName.placeholder = modalRoomMode === 'join' ? t('room_placeholder') : '';
+}
+
+function setRoomModal(open) {
+  if (!roomModal) return;
+  const next = Boolean(open);
+  if (next) {
+    hidePinTip();
+    setAccountMenu(false);
+    setPeopleOpen(false);
+    setMicOpen(false);
+    setModalRoomError('');
+    setModalRoomMode(modalRoomMode);
+  }
+  setPopOpen(roomModal, next);
+  if (pinAddBtn) pinAddBtn.setAttribute('aria-expanded', isPopOpen(roomModal) ? 'true' : 'false');
+  if (next && modalRoomName) modalRoomName.focus();
+}
+
+function openRoomModal() {
+  if (cropper && !cropper.hidden) return;
+  if (modalRoomName) modalRoomName.value = '';
+  if (modalRoomPassword) modalRoomPassword.value = '';
+  setModalPermanent(false);
+  setModalRoomMode('join');
+  setRoomModal(true);
+}
+
+async function joinAccountRoom({ name, password, create, permanent, onError, onBusy }) {
+  const fail = (message) => {
+    if (onError) onError(message);
+  };
+  const busy = (value) => {
+    if (onBusy) onBusy(value);
+  };
+  if (!name || !password) {
+    fail(t('enter_fields'));
+    return false;
+  }
+  if (!accountUser) {
+    fail(t('auth_required'));
+    return false;
+  }
+  busy(true);
+  try {
+    let joinName = name;
+    if (create) {
+      const createdRes = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          name,
+          password,
+          permanent: Boolean(permanent),
+        }),
+      });
+      if (!createdRes.ok) {
+        fail(await readError(createdRes, t('could_not_create')));
+        return false;
+      }
+      const created = await createdRes.json();
+      joinName = created.label || created.name || name;
+    }
+    const res = await fetch('/api/rooms/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ name: joinName, password }),
+    });
+    if (!res.ok) {
+      fail(await readError(res, t('could_not_enter')));
+      return false;
+    }
+    const info = await res.json();
+    if (info.permanent) cachePermanentRoom(info.name || joinName, password);
+    setRoomModal(false);
+    if (!roomView.hidden) {
+      await returnHome({ notifyServer: false });
+    }
+    await enterRoom(info);
+    return true;
+  } catch {
+    fail(t('could_not_reach'));
+    return false;
+  } finally {
+    busy(false);
+  }
+}
+
+function closeCropper() {
+  cropJob = null;
+  if (cropper) cropper.hidden = true;
+  if (imageFile) imageFile.value = '';
+}
+
+function layoutCrop() {
+  if (!cropJob || !cropperStage || !cropperImage) return;
+  const s = cropperStage.clientWidth;
+  const cover = Math.max(s / cropJob.nw, s / cropJob.nh) * (cropJob.zoom / 100);
+  const w = cropJob.nw * cover;
+  const h = cropJob.nh * cover;
+  cropJob.minX = Math.min(0, s - w);
+  cropJob.minY = Math.min(0, s - h);
+  cropJob.x = Math.min(0, Math.max(cropJob.minX, cropJob.x));
+  cropJob.y = Math.min(0, Math.max(cropJob.minY, cropJob.y));
+  cropperImage.style.width = `${w}px`;
+  cropperImage.style.height = `${h}px`;
+  cropperImage.style.left = `${cropJob.x}px`;
+  cropperImage.style.top = `${cropJob.y}px`;
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image'));
+    img.src = src;
+  });
+}
+
+async function startCropFromFile(file, kind) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImageElement(url);
+    const max = Math.max(img.naturalWidth, img.naturalHeight);
+    let source = img;
+    if (max > IMAGE_MAX_PX) {
+      const scale = IMAGE_MAX_PX / max;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      source = await loadImageElement(canvas.toDataURL('image/png'));
+    }
+    cropJob = {
+      kind,
+      img: source,
+      nw: source.naturalWidth,
+      nh: source.naturalHeight,
+      x: 0,
+      y: 0,
+      zoom: 100,
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+    };
+    cropperImage.src = source.src;
+    cropperZoom.value = '100';
+    cropper.hidden = false;
+    layoutCrop();
+  } catch {
+    showRoomError(t('image_invalid'));
+    if (loginView && !loginView.hidden) {
+      loginError.textContent = t('image_invalid');
+      loginError.hidden = false;
+    }
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function exportCropBlob() {
+  if (!cropJob || !cropperStage) return Promise.resolve(null);
+  const s = cropperStage.clientWidth;
+  const cover = Math.max(s / cropJob.nw, s / cropJob.nh) * (cropJob.zoom / 100);
+  const sw = s / cover;
+  const sx = -cropJob.x / cover;
+  const sy = -cropJob.y / cover;
+  const out = Math.min(IMAGE_MAX_PX, Math.max(1, Math.round(sw)));
+  const canvas = document.createElement('canvas');
+  canvas.width = out;
+  canvas.height = out;
+  canvas.getContext('2d').drawImage(cropJob.img, sx, sy, sw, sw, 0, 0, out, out);
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/webp', 0.9);
+  });
+}
+
+function pickImage(kind) {
+  cropJob = { kind, pending: true };
+  if (imageFile) imageFile.click();
+}
+
+async function uploadCropped(kind, blob) {
+  const path = kind === 'avatar' ? '/api/account/avatar' : '/api/rooms/icon';
+  const res = await fetch(path, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'image/webp' },
+    body: blob,
+  });
+  if (!res.ok) throw new Error(await readError(res, t('image_invalid')));
+  return res.json();
 }
 
 function keyOf(value) {
@@ -319,9 +1116,9 @@ function applyUiLanguage() {
   applyI18n();
   syncLangButtons();
   setYouName(myName);
+  setHomeAuth(homeAuth);
   setHomeMode(homeMode);
   setHomeStep(homeStep);
-  if (createTtlWarn) createTtlWarn.hidden = homeMode !== 'create' || homeStep !== 'room';
   setLocalSharing(Boolean(localStream));
   setFloatOpen(floatBtn.dataset.open === 'true');
   syncMicControls();
@@ -329,6 +1126,11 @@ function applyUiLanguage() {
   syncChatDeleteLabels();
   applyLayout();
   refreshRemoteMedia();
+  renderPins();
+  setModalRoomMode(modalRoomMode);
+  if (pinTipKey === '__add__' && pinAddBtn && pinTip && !pinTip.hidden) {
+    showPinTip(pinAddBtn, { nameKey: '__add__', label: t('join_room') }, { nameOnly: true });
+  }
 }
 
 function loadCachedRoom() {
@@ -373,11 +1175,25 @@ function renderPeopleList() {
       mic.innerHTML = PERSON_MIC_SVG;
       mic.setAttribute('aria-label', item.self ? t('your_mic') : t('voice_for', { name: item.name }));
 
+      const avatar = document.createElement('span');
+      avatar.className = 'person-avatar';
+      const avatarUrl = item.self
+        ? (accountUser && accountUser.avatarUrl)
+        : (item.peer && item.peer.avatarUrl);
+      if (avatarUrl) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = avatarUrl;
+        avatar.append(img);
+      } else {
+        avatar.textContent = letterFor(item.name);
+      }
+
       const name = document.createElement('span');
       name.className = 'person-name';
       name.textContent = item.self ? `${item.name} ${t('you_suffix')}` : item.name;
 
-      li.append(mic, name);
+      li.append(mic, avatar, name);
       if (!item.self && iAmCreator) {
         const kick = document.createElement('button');
         kick.type = 'button';
@@ -395,7 +1211,7 @@ function renderPeopleList() {
         mic.addEventListener('click', (event) => {
           event.stopPropagation();
           if (micBtn.disabled) return;
-          setMicOpen(micPanel.hidden);
+          setMicOpen(!isPopOpen(micPanel));
         });
       } else {
         const pop = document.createElement('div');
@@ -496,15 +1312,15 @@ function setMicOpen(open) {
   if (open) setPeopleOpen(false);
   voicePeerId = null;
   refreshPeopleVoice();
-  micPanel.hidden = !open;
-  micBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  setPopOpen(micPanel, open);
+  micBtn.setAttribute('aria-expanded', isPopOpen(micPanel) ? 'true' : 'false');
 }
 
 function setPeopleOpen(open) {
   if (open) setMicOpen(false);
-  peoplePanel.hidden = !open;
-  peerStatus.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if (!open) {
+  setPopOpen(peoplePanel, open);
+  peerStatus.setAttribute('aria-expanded', isPopOpen(peoplePanel) ? 'true' : 'false');
+  if (!isPopOpen(peoplePanel)) {
     voicePeerId = null;
     refreshPeopleVoice();
   }
@@ -1021,30 +1837,35 @@ async function openMicDevice(deviceId) {
 }
 
 async function startMicCapture() {
-  if (micStarting || micRawStream || micDenied) return;
+  if (micRawStream || micDenied) return;
+  if (micStartPromise) return micStartPromise;
   micStarting = true;
-  loadMicSettings();
-  syncMicControls();
-  micUnmuted = false;
-  micSpeaking = false;
-  micHangUntil = 0;
-  setMicLive(false);
-  micBtn.disabled = false;
-  try {
-    await openMicDevice(micSettings.deviceId);
-  } catch (err) {
-    console.error(err);
-    if (err && err.name === 'NotAllowedError') {
-      micDenied = true;
-      micBtn.disabled = true;
-      showRoomError(t('mic_blocked'));
-    } else {
-      micBtn.disabled = false;
-      showRoomError(t('mic_fail'));
+  micStartPromise = (async () => {
+    loadMicSettings();
+    syncMicControls();
+    micUnmuted = false;
+    micSpeaking = false;
+    micHangUntil = 0;
+    setMicLive(false);
+    micBtn.disabled = false;
+    try {
+      await openMicDevice(micSettings.deviceId);
+    } catch (err) {
+      console.error(err);
+      if (err && err.name === 'NotAllowedError') {
+        micDenied = true;
+        micBtn.disabled = true;
+        showRoomError(t('mic_blocked'));
+      } else {
+        micBtn.disabled = false;
+        showRoomError(t('mic_fail'));
+      }
+    } finally {
+      micStarting = false;
+      micStartPromise = null;
     }
-  } finally {
-    micStarting = false;
-  }
+  })();
+  return micStartPromise;
 }
 
 function stopMicCapture() {
@@ -1082,13 +1903,18 @@ function stopMicCapture() {
   micSpeaking = false;
   micDenied = false;
   micStarting = false;
+  micStartPromise = null;
   setMicLive(false);
   setMicOpen(false);
   if (micLevel) micLevel.style.width = '0';
   syncMicControls();
 }
 
-function setMicUnmuted(on) {
+async function setMicUnmuted(on) {
+  if (on && !micRawStream) {
+    await startMicCapture();
+    if (!micRawStream) return;
+  }
   micUnmuted = Boolean(on);
   if (micCtx) micCtx.resume().catch(() => {});
   keepMicSinkAlive();
@@ -2542,7 +3368,6 @@ async function unlockMedia() {
     if (peer.voiceEl) peer.voiceEl.play().catch(() => {});
     if (peer.stream) playRemote(peer);
   }
-  if (!leavingRoom && !roomView.hidden && !micRawStream && !micDenied && !micStarting) startMicCapture();
 }
 
 function watchRemoteTrack(peer, track) {
@@ -2626,21 +3451,26 @@ function createRemotePane(id) {
   return { pane, video, unmute, volumeSlider };
 }
 
-function setPeerName(id, name) {
+function setPeerName(id, name, meta) {
   const peer = peers.get(id);
-  if (!peer || !name) return peer;
-  peer.name = name;
+  if (!peer) return peer;
+  if (name) peer.name = name;
+  if (meta) {
+    if (meta.avatarUrl !== undefined) peer.avatarUrl = meta.avatarUrl || '';
+    if (meta.userId !== undefined) peer.userId = meta.userId || null;
+  }
   const label = peer.pane.querySelector('.pane-name');
-  if (label) label.textContent = name;
+  if (label && peer.name) label.textContent = peer.name;
   renderPeopleList();
   return peer;
 }
 
-function resetPeer(id, name) {
+function resetPeer(id, name, meta) {
   const existing = peers.get(id);
   const keepName = name || (existing && existing.name) || '';
+  const keepMeta = meta || (existing ? { avatarUrl: existing.avatarUrl, userId: existing.userId } : null);
   removePeer(id);
-  return ensurePeer(id, keepName);
+  return ensurePeer(id, keepName, keepMeta);
 }
 
 async function flushIce(peer) {
@@ -2673,9 +3503,9 @@ function recoverPeer(peer, forceReset) {
   resetPeer(peer.id);
 }
 
-function ensurePeer(id, name) {
+function ensurePeer(id, name, meta) {
   if (peers.has(id)) {
-    if (name) setPeerName(id, name);
+    setPeerName(id, name, meta);
     return peers.get(id);
   }
   const polite = peerPolite(id);
@@ -2683,6 +3513,8 @@ function ensurePeer(id, name) {
   const state = {
     id,
     name: name || '',
+    userId: meta && meta.userId || null,
+    avatarUrl: meta && meta.avatarUrl || '',
     polite,
     pane,
     video,
@@ -2927,7 +3759,12 @@ async function handleSignal(from, data) {
 function peerEntry(item) {
   if (!item) return null;
   if (typeof item === 'string') return { id: item, name: '' };
-  return { id: item.id, name: item.name || '' };
+  return {
+    id: item.id,
+    name: item.name || '',
+    userId: item.userId || null,
+    avatarUrl: item.avatarUrl || null,
+  };
 }
 
 async function handleRoomMessage(msg) {
@@ -2942,11 +3779,11 @@ async function handleRoomMessage(msg) {
     for (const peer of listed) {
       const existing = peers.get(peer.id);
       if (!existing) {
-        ensurePeer(peer.id, peer.name);
+        ensurePeer(peer.id, peer.name, peer);
         sendSignal(peer.id, { type: 'restart' });
         continue;
       }
-      setPeerName(peer.id, peer.name);
+      setPeerName(peer.id, peer.name, peer);
       const ice = existing.pc.iceConnectionState;
       const conn = existing.pc.connectionState;
       if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
@@ -2957,7 +3794,7 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'peer-joined') {
-    if (msg.id && msg.id !== myId) resetPeer(msg.id, msg.name);
+    if (msg.id && msg.id !== myId) resetPeer(msg.id, msg.name, msg);
     showRoomError('');
     return;
   }
@@ -3139,7 +3976,7 @@ function setChatOpen(open, options = {}) {
   chatOverlay.setAttribute('aria-hidden', 'true');
   window.setTimeout(() => {
     if (!chatOpen) chatOverlay.hidden = true;
-  }, 240);
+  }, 220);
   if (options.restoreFocus !== false && roomView && !roomView.hidden) chatBtn.focus();
   applyLayout();
 }
@@ -3170,8 +4007,11 @@ async function enterRoom(info) {
   leavingRoom = false;
   if (info && info.username) setYouName(info.username);
   iAmCreator = Boolean(info && info.isCreator);
+  canEditIcon = Boolean(info && info.canEditIcon);
+  currentNameKey = (info && info.nameKey) || '';
   setRoomLabel(info && (info.label || info.name));
   setRoomInviteUrl(currentRoomLabel);
+  setRoomIconButton(info);
   const configRes = await fetch('/api/config', { credentials: 'same-origin' });
   if (configRes.ok) {
     const config = await configRes.json();
@@ -3189,7 +4029,9 @@ async function enterRoom(info) {
   refreshRemoteMedia();
   await connectSocket();
   connectChat();
-  await startMicCapture();
+  loadMicSettings();
+  syncMicControls();
+  await loadAccount();
 }
 
 function disconnectSocket() {
@@ -3224,6 +4066,9 @@ async function returnHome(options = {}) {
   setRoomLabel('');
   clearRoomInviteUrl();
   iAmCreator = false;
+  canEditIcon = false;
+  currentNameKey = '';
+  setRoomIconButton(null);
   myId = null;
   if (notifyServer) {
     try {
@@ -3237,6 +4082,7 @@ async function returnHome(options = {}) {
   setHomeStep('room');
   prefillJoinForm();
   usernameInput.value = '';
+  renderPins();
   if (options.message) {
     loginError.textContent = options.message;
     loginError.hidden = false;
@@ -3305,13 +4151,13 @@ if (langPt) langPt.addEventListener('click', () => {
 
 peerStatus.addEventListener('click', (event) => {
   event.stopPropagation();
-  setPeopleOpen(peoplePanel.hidden);
+  setPeopleOpen(!isPopOpen(peoplePanel));
 });
 
 micBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   if (micBtn.disabled) return;
-  setMicOpen(micPanel.hidden);
+  setMicOpen(!isPopOpen(micPanel));
 });
 
 micToggle.addEventListener('click', (event) => {
@@ -3323,6 +4169,7 @@ micDevice.addEventListener('change', async () => {
   const id = micDevice.value;
   micSettings.deviceId = id;
   saveMicSettings();
+  if (!micRawStream) return;
   try {
     await openMicDevice(id);
   } catch (err) {
@@ -3347,8 +4194,10 @@ micPanel.addEventListener('click', (event) => event.stopPropagation());
 document.addEventListener('click', (event) => {
   const inPeople = event.target.closest('.people-wrap');
   const inMic = event.target.closest('.mic-wrap');
-  if (!peoplePanel.hidden && !inPeople) setPeopleOpen(false);
-  if (!micPanel.hidden && !inMic) setMicOpen(false);
+  const inAccount = event.target.closest('.pin-user');
+  if (isPopOpen(peoplePanel) && !inPeople) setPeopleOpen(false);
+  if (isPopOpen(micPanel) && !inMic) setMicOpen(false);
+  if (isPopOpen(accountMenu) && !inAccount) setAccountMenu(false);
   if (voicePeerId && !inPeople) {
     voicePeerId = null;
     refreshPeopleVoice();
@@ -3360,6 +4209,10 @@ loginForm.addEventListener('submit', async (event) => {
   unlockMedia();
   loginError.hidden = true;
   loginError.textContent = '';
+  if (!accountUser && (homeAuth === 'login' || homeAuth === 'register')) {
+    await submitAccount();
+    return;
+  }
   if (homeStep === 'room') {
     const name = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -3375,7 +4228,11 @@ loginForm.addEventListener('submit', async (event) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ name, password }),
+          body: JSON.stringify({
+            name,
+            password,
+            permanent: Boolean(accountUser && homePermanent),
+          }),
         });
         if (!res.ok) {
           loginError.textContent = await readError(res, t('could_not_create'));
@@ -3393,6 +4250,35 @@ loginForm.addEventListener('submit', async (event) => {
       }
     } else {
       pendingHome = { name, password };
+    }
+    if (accountUser) {
+      loginBtn.disabled = true;
+      const payload = {
+        name: pendingHome.name || roomNameInput.value,
+        password: pendingHome.password || passwordInput.value,
+      };
+      try {
+        const res = await fetch('/api/rooms/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          loginError.textContent = await readError(res, t('could_not_enter'));
+          loginError.hidden = false;
+          return;
+        }
+        const info = await res.json();
+        if (info.permanent) cachePermanentRoom(info.name || payload.name.trim(), payload.password);
+        await enterRoom(info);
+      } catch {
+        loginError.textContent = t('could_not_reach');
+        loginError.hidden = false;
+      } finally {
+        loginBtn.disabled = false;
+      }
+      return;
     }
     setHomeStep('user');
     setHomeMode(homeMode);
@@ -3487,6 +4373,7 @@ if (chatForm && chatInput) {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && chatOpen) {
+    if (isPopOpen(roomModal) || (cropper && !cropper.hidden)) return;
     event.preventDefault();
     setChatOpen(false);
   }
@@ -3545,6 +4432,198 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   });
 }
 
+if (modeTemporary) modeTemporary.addEventListener('click', () => setHomePermanent(false));
+if (modePermanent) modePermanent.addEventListener('click', () => setHomePermanent(true));
+if (modeGuest) modeGuest.addEventListener('click', () => setHomeAuth('guest'));
+if (modeLogin) modeLogin.addEventListener('click', () => setHomeAuth('login'));
+if (modeRegister) modeRegister.addEventListener('click', () => setHomeAuth('register'));
+if (accountSubmit) accountSubmit.addEventListener('click', () => submitAccount());
+if (accountAvatarBtn) {
+  accountAvatarBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    hidePinTip();
+    setAccountMenu(!isPopOpen(accountMenu));
+  });
+}
+if (pinTip) {
+  pinTip.addEventListener('pointerenter', () => {
+    if (pinTipTimer) {
+      clearTimeout(pinTipTimer);
+      pinTipTimer = 0;
+    }
+  });
+  pinTip.addEventListener('pointerleave', () => delayHidePinTip());
+}
+if (pinTipUnpin) {
+  pinTipUnpin.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (pinTipKey && pinTipKey !== '__add__') unpinRoom(pinTipKey);
+  });
+}
+if (pinTipPin) {
+  pinTipPin.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (pinTipKey && pinTipKey !== '__add__') pinRoom(pinTipKey);
+  });
+}
+if (pinAddBtn) {
+  pinAddBtn.addEventListener('click', () => {
+    hidePinTip();
+    if (isPopOpen(roomModal)) setRoomModal(false);
+    else openRoomModal();
+  });
+  pinAddBtn.addEventListener('pointerenter', () => {
+    showPinTip(pinAddBtn, { nameKey: '__add__', label: t('join_room') }, { nameOnly: true });
+  });
+  pinAddBtn.addEventListener('pointerleave', () => delayHidePinTip());
+}
+if (roomModal) {
+  roomModal.addEventListener('click', (event) => {
+    if (event.target === roomModal) setRoomModal(false);
+  });
+}
+if (roomModalClose) {
+  roomModalClose.addEventListener('click', () => setRoomModal(false));
+}
+if (modalModeJoin) modalModeJoin.addEventListener('click', () => {
+  setModalRoomError('');
+  setModalRoomMode('join');
+});
+if (modalModeCreate) modalModeCreate.addEventListener('click', () => {
+  setModalRoomError('');
+  setModalRoomMode('create');
+});
+if (modalModeTemporary) {
+  modalModeTemporary.addEventListener('click', () => {
+    setModalRoomError('');
+    setModalPermanent(false);
+  });
+}
+if (modalModePermanent) {
+  modalModePermanent.addEventListener('click', () => {
+    setModalRoomError('');
+    setModalPermanent(true);
+  });
+}
+if (roomModalForm) {
+  roomModalForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const name = modalRoomName ? modalRoomName.value.trim() : '';
+    const password = modalRoomPassword ? modalRoomPassword.value : '';
+    await joinAccountRoom({
+      name,
+      password,
+      create: modalRoomMode === 'create',
+      permanent: modalPermanentOn,
+      onError: setModalRoomError,
+      onBusy: (busy) => {
+        if (modalRoomSubmit) modalRoomSubmit.disabled = busy;
+      },
+    });
+  });
+}
+if (pinList) {
+  pinList.addEventListener('scroll', () => hidePinTip());
+}
+window.addEventListener('resize', () => hidePinTip());
+if (accountUploadBtn) {
+  accountUploadBtn.addEventListener('click', () => {
+    setAccountMenu(false);
+    pickImage('avatar');
+  });
+}
+if (accountLogoutBtn) accountLogoutBtn.addEventListener('click', () => logoutAccount());
+if (accountDeleteBtn) accountDeleteBtn.addEventListener('click', () => deleteAccount());
+if (roomIconBtn) {
+  roomIconBtn.addEventListener('click', () => {
+    if (!canEditIcon) return;
+    pickImage('room');
+  });
+}
+if (imageFile) {
+  imageFile.addEventListener('change', async () => {
+    const file = imageFile.files && imageFile.files[0];
+    const kind = cropJob && cropJob.kind;
+    if (!file || !kind) return;
+    await startCropFromFile(file, kind);
+  });
+}
+if (cropperCancel) cropperCancel.addEventListener('click', () => closeCropper());
+if (cropperConfirm) {
+  cropperConfirm.addEventListener('click', async () => {
+    const kind = cropJob && cropJob.kind;
+    const blob = await exportCropBlob();
+    if (!blob || !kind) {
+      loginError.textContent = t('image_invalid');
+      loginError.hidden = false;
+      return;
+    }
+    try {
+      const data = await uploadCropped(kind, blob);
+      closeCropper();
+      if (kind === 'avatar' && data.user) {
+        accountUser = { ...accountUser, ...data.user };
+        renderPins();
+        renderPeopleList();
+      }
+      if (kind === 'room' && data.iconUrl) {
+        currentIconUrl = data.iconUrl;
+        setRoomIconButton({ canEditIcon: true, iconUrl: data.iconUrl });
+        await loadAccount();
+      }
+    } catch (err) {
+      const message = err && err.message ? err.message : t('image_invalid');
+      showRoomError(message);
+      loginError.textContent = message;
+      loginError.hidden = false;
+    }
+  });
+}
+if (cropperZoom) {
+  cropperZoom.addEventListener('input', () => {
+    if (!cropJob) return;
+    cropJob.zoom = Number(cropperZoom.value) || 100;
+    layoutCrop();
+  });
+}
+if (cropperStage) {
+  cropperStage.addEventListener('pointerdown', (event) => {
+    if (!cropJob) return;
+    cropJob.dragging = true;
+    cropJob.lastX = event.clientX;
+    cropJob.lastY = event.clientY;
+    cropperStage.setPointerCapture(event.pointerId);
+  });
+  cropperStage.addEventListener('pointermove', (event) => {
+    if (!cropJob || !cropJob.dragging) return;
+    cropJob.x += event.clientX - cropJob.lastX;
+    cropJob.y += event.clientY - cropJob.lastY;
+    cropJob.lastX = event.clientX;
+    cropJob.lastY = event.clientY;
+    layoutCrop();
+  });
+  cropperStage.addEventListener('pointerup', () => {
+    if (cropJob) cropJob.dragging = false;
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (cropJob && cropper && !cropper.hidden) layoutCrop();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (cropper && !cropper.hidden) {
+    event.preventDefault();
+    closeCropper();
+    return;
+  }
+  if (isPopOpen(roomModal)) {
+    event.preventDefault();
+    setRoomModal(false);
+  }
+});
+
 async function boot() {
   initLang();
   syncLangButtons();
@@ -3554,6 +4633,8 @@ async function boot() {
   const invite = parseRoomInvite();
   if (invite) applyRoomInvite(invite);
   applyUiLanguage();
+  await loadAuthConfig();
+  await loadAccount();
   try {
     const res = await fetch('/api/me', { credentials: 'same-origin' });
     if (res.ok) {
