@@ -66,7 +66,7 @@ Unpackaged (`npm start` / `npm run dev`) loads `http://localhost:3000`. A packag
 - Voice starts muted. Unmute from the mic menu; speaking is gated by the voice activity slider. Screen-share audio and voice volume are independent.
 - Chrome and Edge on Windows can include tab or system audio from the share picker. Firefox and Safari often send video only.
 - Google STUN is enough for most home networks. Symmetric NAT or locked-down networks may need a TURN server in `ICE_SERVERS`.
-- This app was built with [Cursor](https://cursor.com) during development.
+- During development, [Cursor](https://cursor.com) was used.
 
 ## License
 

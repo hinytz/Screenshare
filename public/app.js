@@ -9,10 +9,14 @@ const usernameInput = document.getElementById('username');
 const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
 const homeBack = document.getElementById('home-back');
+const homeRoomBack = document.getElementById('home-room-back');
 const homeRoomHeading = document.getElementById('home-room-heading');
 const home = document.querySelector('.home');
+const homeStepKind = document.getElementById('home-step-kind');
 const homeStepRoom = document.getElementById('home-step-room');
 const homeStepUser = document.getElementById('home-step-user');
+const homeKindScreenshare = document.getElementById('home-kind-screenshare');
+const homeKindWatchparty = document.getElementById('home-kind-watchparty');
 const createTtlWarn = document.getElementById('create-ttl-warn');
 const permanentField = document.getElementById('permanent-field');
 const modeTemporary = document.getElementById('mode-temporary');
@@ -46,8 +50,35 @@ const modalCreateTtl = document.getElementById('modal-create-ttl');
 const modalPermanentField = document.getElementById('modal-permanent-field');
 const modalModeTemporary = document.getElementById('modal-mode-temporary');
 const modalModePermanent = document.getElementById('modal-mode-permanent');
+const modalStepKind = document.getElementById('modal-step-kind');
+const modalStepRoom = document.getElementById('modal-step-room');
+const modalStepUser = document.getElementById('modal-step-user');
+const modalKindScreenshare = document.getElementById('modal-kind-screenshare');
+const modalKindWatchparty = document.getElementById('modal-kind-watchparty');
+const modalUsername = document.getElementById('modal-username');
+const modalBack = document.getElementById('modal-back');
 const modalRoomSubmit = document.getElementById('modal-room-submit');
 const modalRoomError = document.getElementById('modal-room-error');
+const watchBtn = document.getElementById('watch-btn');
+const watchSheet = document.getElementById('watch-sheet');
+const watchSheetClose = document.getElementById('watch-sheet-close');
+const watchForm = document.getElementById('watch-form');
+const watchUrlInput = document.getElementById('watch-url');
+const watchStartBtn = document.getElementById('watch-start');
+const watchStopBtn = document.getElementById('watch-stop');
+const watchError = document.getElementById('watch-error');
+const paneWatch = document.getElementById('pane-watch');
+const watchStage = document.getElementById('watch-stage');
+const watchControls = document.getElementById('watch-controls');
+const watchTransport = document.getElementById('watch-transport');
+const watchPlayBtn = document.getElementById('watch-play');
+const watchSeek = document.getElementById('watch-seek');
+const watchTime = document.getElementById('watch-time');
+const watchMuteBtn = document.getElementById('watch-mute');
+const watchVolume = document.getElementById('watch-volume');
+const watchFsBtn = document.getElementById('watch-fs');
+const watchTitle = document.getElementById('watch-title');
+const watchStateLabel = document.getElementById('watch-state');
 const accountAvatarBtn = document.getElementById('account-avatar-btn');
 const accountAvatarImg = document.getElementById('account-avatar-img');
 const accountAvatarLetter = document.getElementById('account-avatar-letter');
@@ -131,13 +162,14 @@ const DEFAULT_ICE = [
 ];
 
 const ROOM_CACHE_KEY = 'screenshare.rooms';
+const GUEST_PINS_KEY = 'screenshare.guestPins';
 const MIC_CACHE_KEY = 'screenshare.mic';
 const MAX_PEOPLE = 5;
 const MIC_BITRATE = 64_000;
 const VAD_HANG_MS = 160;
 const PERSON_MIC_SVG = '<svg class="hi icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.1572 4.1572C8.94761 2.86349 10.373 2 12 2C14.4853 2 16.5 4.01472 16.5 6.5V11.5C16.5 11.8111 16.4684 12.1149 16.4083 12.4083M7.5 7.5V11.5C7.5 13.9853 9.51472 16 12 16C13.1154 16 14.136 15.5942 14.9222 14.9222"/><path d="M2 2L22 22"/><path d="M12 19H11.5828C8.07267 19 5.07706 16.4623 4.5 13M12 19H12.4172C14.2325 19 15.9102 18.3213 17.1869 17.1869M12 19V22M19.5 13C19.3878 13.6733 19.1841 14.3116 18.903 14.903"/></svg><svg class="hi icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6.5C7 4.01472 9.01472 2 11.5 2C13.9853 2 16 4.01472 16 6.5V11.5C16 13.9853 13.9853 16 11.5 16C9.01472 16 7 13.9853 7 11.5V6.5Z"/><path d="M11.5 19H11.0828C7.57267 19 4.57706 16.4623 4 13M11.5 19H11.9172C15.4273 19 18.4229 16.4623 19 13M11.5 19V22"/></svg>';
 const DELETE_SVG = '<svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.5L18.8803 15.5251C18.7219 18.0864 18.6428 19.3671 18.0008 20.2879C17.6833 20.7431 17.2747 21.1273 16.8007 21.416C15.8421 22 14.559 22 11.9927 22C9.42312 22 8.1383 22 7.17905 21.4149C6.7048 21.1257 6.296 20.7408 5.97868 20.2848C5.33688 19.3626 5.25945 18.0801 5.10461 15.5152L4.5 5.5"/><path d="M3 5.5H21M16.0557 5.5L15.3731 4.09173C14.9196 3.15626 14.6928 2.68852 14.3017 2.39681C14.215 2.3321 14.1231 2.27454 14.027 2.2247C13.5939 2 13.0741 2 12.0345 2C10.9688 2 10.436 2 9.99568 2.23412C9.8981 2.28601 9.80498 2.3459 9.71729 2.41317C9.32164 2.7167 9.10063 3.20155 8.65861 4.17126L8.05292 5.5"/><path d="M9.5 16.5L9.5 10.5"/><path d="M14.5 16.5L14.5 10.5"/></svg>';
-const PANE_PIP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 7H5c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm0 8H5V9h14v6z"/><path d="M13 10h5v3.8h-5z"/></svg>';
+const PANE_PIP_SVG = '<svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99219 19.965C5.11989 19.8873 3.97194 19.6366 3.16376 18.8284C1.99219 17.6569 1.99219 15.7712 1.99219 12C1.99219 8.22876 1.99219 6.34315 3.16376 5.17157C4.33534 4 6.22095 4 9.99219 4H13.9922C17.7634 4 19.6491 4 20.8206 5.17157C21.4738 5.82475 21.7628 6.69989 21.8907 8"/><path d="M19.9297 12H13.0547C11.9156 12 10.9922 12.8954 10.9922 14V18C10.9922 19.1046 11.9156 20 13.0547 20H19.9297C21.0688 20 21.9922 19.1046 21.9922 18V14C21.9922 12.8954 21.0688 12 19.9297 12Z"/></svg>';
 
 let iceServers = DEFAULT_ICE;
 let events = null;
@@ -150,8 +182,22 @@ let homeMode = 'join';
 let homePermanent = false;
 let modalPermanentOn = false;
 let homeStep = 'room';
-let pendingHome = { name: '', password: '' };
+let homeKind = 'screenshare';
+let modalStep = 'room';
+let modalKind = 'screenshare';
+let pendingHome = { name: '', password: '', kind: 'screenshare' };
+let pendingModal = { name: '', password: '', kind: 'screenshare' };
 let currentRoomLabel = '';
+let currentRoomPassword = '';
+let roomKind = 'screenshare';
+let watchState = null;
+let watchPlayer = null;
+let watchTickTimer = 0;
+let watchApplying = false;
+let watchRenderSeq = 0;
+let watchVolumeValue = 1;
+let watchVolumeRestore = 1;
+let canManageWatch = false;
 let copyRoomTimer = null;
 let iAmCreator = false;
 let canEditIcon = false;
@@ -159,6 +205,7 @@ let currentNameKey = '';
 let currentIconUrl = '';
 let accountUser = null;
 let accountPins = [];
+let guestPins = [];
 let homeAuth = 'guest';
 let turnstileSiteKey = '';
 let turnstileWidgetId = null;
@@ -169,6 +216,7 @@ let pinTipKey = '';
 let modalRoomMode = 'join';
 let leavingRoom = false;
 let chatSocket = null;
+let watchSocket = null;
 let chatOpen = false;
 let chatStickBottom = true;
 let featured = 'you';
@@ -180,7 +228,7 @@ let selfCamApp = true;
 let selfCamFloat = true;
 let floatWin = null;
 let floatPoll = null;
-let mediaUnlocked = false;
+let mediaUnlocked = Boolean(desktop);
 let micUnmuted = false;
 let micSpeaking = false;
 let micHangUntil = 0;
@@ -240,9 +288,16 @@ function syncLangButtons() {
   if (langPt) langPt.setAttribute('aria-pressed', current === 'pt' ? 'true' : 'false');
 }
 
+function setHomeKind(kind) {
+  homeKind = kind === 'watchparty' ? 'watchparty' : 'screenshare';
+  if (homeKindScreenshare) homeKindScreenshare.setAttribute('aria-selected', homeKind === 'screenshare' ? 'true' : 'false');
+  if (homeKindWatchparty) homeKindWatchparty.setAttribute('aria-selected', homeKind === 'watchparty' ? 'true' : 'false');
+}
+
 function setHomeStep(step) {
-  homeStep = step === 'user' ? 'user' : 'room';
+  homeStep = step === 'user' || step === 'kind' ? step : 'room';
   if (home) home.dataset.step = homeStep;
+  if (homeStepKind) homeStepKind.hidden = homeStep !== 'kind';
   if (homeStepRoom) homeStepRoom.hidden = homeStep !== 'room';
   if (homeStepUser) homeStepUser.hidden = homeStep !== 'user';
   if (homeRoomHeading) {
@@ -254,7 +309,7 @@ function setHomeStep(step) {
   loginBtn.textContent = homeStep === 'user' ? t('enter') : t('continue');
   if (!loginView.hidden) {
     if (homeStep === 'user') usernameInput.focus();
-    else roomNameInput.focus();
+    else if (homeStep === 'room') roomNameInput.focus();
   }
 }
 
@@ -276,8 +331,9 @@ function setHomeMode(mode) {
   if (permanentField) {
     permanentField.hidden = homeMode !== 'create' || homeStep !== 'room' || !accountUser;
   }
-  if (homeStep === 'room') loginBtn.textContent = t('continue');
+  if (homeStep === 'room' || homeStep === 'kind') loginBtn.textContent = t('continue');
   roomNameInput.placeholder = homeMode === 'join' ? t('room_placeholder') : '';
+  if (homeRoomBack) homeRoomBack.hidden = homeMode !== 'create' || homeStep !== 'room';
 }
 
 function letterFor(name) {
@@ -429,33 +485,83 @@ function delayHidePinTip() {
   }, 140);
 }
 
+function loadGuestPins() {
+  try {
+    const raw = localStorage.getItem(GUEST_PINS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((pin) => pin && typeof pin.nameKey === 'string' && pin.nameKey)
+      .map((pin) => ({
+        nameKey: pin.nameKey,
+        label: String(pin.label || pin.nameKey),
+        iconUrl: String(pin.iconUrl || ''),
+        password: String(pin.password || ''),
+        username: String(pin.username || ''),
+        pinned: true,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function saveGuestPins() {
+  try {
+    localStorage.setItem(GUEST_PINS_KEY, JSON.stringify(guestPins.map((pin) => ({
+      nameKey: pin.nameKey,
+      label: pin.label,
+      iconUrl: pin.iconUrl || '',
+      password: pin.password || '',
+      username: pin.username || '',
+    }))));
+  } catch {
+    // ignore quota
+  }
+}
+
+function pinSource() {
+  return accountUser ? accountPins : guestPins;
+}
+
+function currentSeatPin() {
+  return {
+    nameKey: currentNameKey,
+    label: currentRoomLabel || currentNameKey,
+    iconUrl: currentIconUrl || '',
+    password: currentRoomPassword || '',
+    username: myName || '',
+    pinned: false,
+  };
+}
+
+function rememberGuestPinMeta() {
+  if (accountUser || !currentNameKey) return;
+  const idx = guestPins.findIndex((pin) => pin.nameKey === currentNameKey);
+  if (idx === -1) return;
+  guestPins[idx] = {
+    ...guestPins[idx],
+    label: currentRoomLabel || guestPins[idx].label,
+    iconUrl: currentIconUrl || guestPins[idx].iconUrl || '',
+    password: currentRoomPassword || guestPins[idx].password || '',
+    username: myName || guestPins[idx].username || '',
+    pinned: true,
+  };
+  saveGuestPins();
+}
+
 function railRooms() {
-  const rooms = accountPins.map((pin) => ({ ...pin, pinned: pin.pinned !== false }));
-  if (accountUser && currentNameKey && !roomView.hidden) {
+  const rooms = pinSource().map((pin) => ({ ...pin, pinned: pin.pinned !== false }));
+  if (currentNameKey && !roomView.hidden) {
     const seated = rooms.some((pin) => pin.nameKey === currentNameKey);
-    if (!seated) {
-      rooms.push({
-        nameKey: currentNameKey,
-        label: currentRoomLabel || currentNameKey,
-        iconUrl: currentIconUrl || '',
-        pinned: false,
-      });
-    }
+    if (!seated) rooms.push(currentSeatPin());
   }
   return rooms;
 }
 
 function renderPins() {
   if (!pinRail || !pinList) return;
-  const logged = Boolean(accountUser);
-  pinRail.hidden = !logged;
-  if (!logged) {
-    hidePinTip();
-    setRoomModal(false);
-    pinList.replaceChildren(...(pinAddBtn ? [pinAddBtn] : []));
-    renderAccountAvatar();
-    return;
-  }
+  pinRail.hidden = false;
   const rooms = railRooms();
   const pins = rooms.map((pin) => {
     const btn = document.createElement('button');
@@ -519,11 +625,12 @@ async function loadAccount() {
     if (!res.ok) throw new Error('account');
     const data = await res.json();
     accountUser = data.user || null;
-    accountPins = Array.isArray(data.pins) ? data.pins : [];
+    accountPins = accountUser && Array.isArray(data.pins) ? data.pins : [];
   } catch {
     accountUser = null;
     accountPins = [];
   }
+  if (!accountUser) guestPins = loadGuestPins();
   setHomeAuth(accountUser ? 'guest' : homeAuth);
   setHomeMode(homeMode);
   renderPins();
@@ -655,7 +762,7 @@ async function submitAccount() {
     }
     const data = await res.json();
     accountUser = data.user || null;
-    accountPins = Array.isArray(data.pins) ? data.pins : [];
+    accountPins = accountUser && Array.isArray(data.pins) ? data.pins : [];
     if (accountPassword) accountPassword.value = '';
     if (accountUsername) accountUsername.value = '';
     setHomeAuth('guest');
@@ -679,6 +786,7 @@ async function logoutAccount() {
   }
   accountUser = null;
   accountPins = [];
+  guestPins = loadGuestPins();
   setHomeAuth('guest');
   setHomeMode(homeMode);
   renderPins();
@@ -699,6 +807,7 @@ async function deleteAccount() {
   }
   accountUser = null;
   accountPins = [];
+  guestPins = loadGuestPins();
   if (!roomView.hidden) {
     await returnHome({ notifyServer: false });
   }
@@ -706,10 +815,53 @@ async function deleteAccount() {
   renderPins();
 }
 
+function showJoinError(message) {
+  if (roomView.hidden) {
+    loginError.textContent = message;
+    loginError.hidden = false;
+  } else {
+    showRoomError(message);
+  }
+}
+
 async function rejoinPinned(pin) {
   if (!pin || !pin.nameKey) return;
   if (pin.nameKey === currentNameKey && !roomView.hidden) return;
   hidePinTip();
+  if (!accountUser) {
+    if (!pin.password || !pin.username) {
+      openRoomModal({
+        mode: 'join',
+        name: pin.label || pin.nameKey,
+      });
+      return;
+    }
+    try {
+      const res = await fetch('/api/rooms/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          name: pin.label || pin.nameKey,
+          password: pin.password,
+          username: pin.username,
+        }),
+      });
+      if (!res.ok) {
+        showJoinError(await readError(res, t('could_not_enter')));
+        return;
+      }
+      const info = await res.json();
+      if (!roomView.hidden) {
+        await returnHome({ notifyServer: false });
+      }
+      currentRoomPassword = pin.password;
+      await enterRoom(info);
+    } catch {
+      showJoinError(t('could_not_reach'));
+    }
+    return;
+  }
   try {
     const res = await fetch('/api/rooms/rejoin', {
       method: 'POST',
@@ -718,13 +870,7 @@ async function rejoinPinned(pin) {
       body: JSON.stringify({ nameKey: pin.nameKey }),
     });
     if (!res.ok) {
-      const message = await readError(res, t('could_not_enter'));
-      if (roomView.hidden) {
-        loginError.textContent = message;
-        loginError.hidden = false;
-      } else {
-        showRoomError(message);
-      }
+      showJoinError(await readError(res, t('could_not_enter')));
       return;
     }
     const info = await res.json();
@@ -733,17 +879,29 @@ async function rejoinPinned(pin) {
     }
     await enterRoom(info);
   } catch {
-    const message = t('could_not_reach');
-    if (roomView.hidden) {
-      loginError.textContent = message;
-      loginError.hidden = false;
-    } else showRoomError(message);
+    showJoinError(t('could_not_reach'));
   }
 }
 
 async function pinRoom(nameKey) {
   hidePinTip();
   if (!nameKey) return;
+  if (!accountUser) {
+    const seated = currentNameKey === nameKey ? currentSeatPin() : null;
+    const existing = guestPins.find((pin) => pin.nameKey === nameKey);
+    const next = {
+      nameKey,
+      label: (seated && seated.label) || (existing && existing.label) || nameKey,
+      iconUrl: (seated && seated.iconUrl) || (existing && existing.iconUrl) || '',
+      password: (seated && seated.password) || (existing && existing.password) || '',
+      username: (seated && seated.username) || (existing && existing.username) || '',
+      pinned: true,
+    };
+    guestPins = [next, ...guestPins.filter((pin) => pin.nameKey !== nameKey)];
+    saveGuestPins();
+    renderPins();
+    return;
+  }
   try {
     const res = await fetch('/api/rooms/pin', {
       method: 'POST',
@@ -762,6 +920,12 @@ async function pinRoom(nameKey) {
 
 async function unpinRoom(nameKey) {
   hidePinTip();
+  if (!accountUser) {
+    guestPins = guestPins.filter((pin) => pin.nameKey !== nameKey);
+    saveGuestPins();
+    renderPins();
+    return;
+  }
   try {
     const res = await fetch('/api/rooms/unpin', {
       method: 'POST',
@@ -793,16 +957,59 @@ function setModalPermanent(on) {
   modalPermanentOn = Boolean(on);
   if (modalModeTemporary) modalModeTemporary.setAttribute('aria-selected', modalPermanentOn ? 'false' : 'true');
   if (modalModePermanent) modalModePermanent.setAttribute('aria-selected', modalPermanentOn ? 'true' : 'false');
-  setModalRoomMode(modalRoomMode);
+  syncModalFields();
+}
+
+function setModalKind(kind) {
+  modalKind = kind === 'watchparty' ? 'watchparty' : 'screenshare';
+  if (modalKindScreenshare) modalKindScreenshare.setAttribute('aria-selected', modalKind === 'screenshare' ? 'true' : 'false');
+  if (modalKindWatchparty) modalKindWatchparty.setAttribute('aria-selected', modalKind === 'watchparty' ? 'true' : 'false');
+}
+
+function syncModalFields() {
+  if (modalCreateTtl) modalCreateTtl.hidden = modalRoomMode !== 'create' || modalStep !== 'room' || modalPermanentOn;
+  if (modalPermanentField) {
+    modalPermanentField.hidden = modalRoomMode !== 'create' || modalStep !== 'room' || !accountUser;
+  }
+  if (modalRoomName) {
+    modalRoomName.required = modalStep === 'room';
+    modalRoomName.placeholder = modalRoomMode === 'join' ? t('room_placeholder') : '';
+  }
+  if (modalRoomPassword) modalRoomPassword.required = modalStep === 'room';
+  if (modalUsername) modalUsername.required = modalStep === 'user' && !accountUser;
+  if (modalRoomSubmit) {
+    modalRoomSubmit.textContent = modalStep === 'user' || (modalStep === 'room' && accountUser)
+      ? t('enter')
+      : t('continue');
+  }
+}
+
+function setModalStep(step) {
+  modalStep = step === 'kind' || step === 'user' ? step : 'room';
+  if (roomModal) roomModal.dataset.step = modalStep;
+  if (modalStepKind) modalStepKind.hidden = modalStep !== 'kind';
+  if (modalStepRoom) modalStepRoom.hidden = modalStep !== 'room';
+  if (modalStepUser) modalStepUser.hidden = modalStep !== 'user';
+  syncModalFields();
+  if (isPopOpen(roomModal)) {
+    if (modalStep === 'user' && modalUsername) modalUsername.focus();
+    else if (modalStep === 'room' && modalRoomName) modalRoomName.focus();
+  }
 }
 
 function setModalRoomMode(mode) {
-  modalRoomMode = mode === 'create' ? 'create' : 'join';
+  const next = mode === 'create' ? 'create' : 'join';
+  const changed = next !== modalRoomMode;
+  modalRoomMode = next;
   if (modalModeJoin) modalModeJoin.setAttribute('aria-selected', modalRoomMode === 'join' ? 'true' : 'false');
   if (modalModeCreate) modalModeCreate.setAttribute('aria-selected', modalRoomMode === 'create' ? 'true' : 'false');
-  if (modalCreateTtl) modalCreateTtl.hidden = modalRoomMode !== 'create' || modalPermanentOn;
-  if (modalPermanentField) modalPermanentField.hidden = modalRoomMode !== 'create';
-  if (modalRoomName) modalRoomName.placeholder = modalRoomMode === 'join' ? t('room_placeholder') : '';
+  if (changed && modalStep !== 'user') {
+    setModalStep(modalRoomMode === 'create' ? 'kind' : 'room');
+  } else if (modalStep === 'kind' && modalRoomMode === 'join') {
+    setModalStep('room');
+  } else {
+    syncModalFields();
+  }
 }
 
 function setRoomModal(open) {
@@ -815,34 +1022,45 @@ function setRoomModal(open) {
     setMicOpen(false);
     setModalRoomError('');
     setModalRoomMode(modalRoomMode);
+    setModalStep(modalStep);
   }
   setPopOpen(roomModal, next);
   if (pinAddBtn) pinAddBtn.setAttribute('aria-expanded', isPopOpen(roomModal) ? 'true' : 'false');
-  if (next && modalRoomName) modalRoomName.focus();
+  if (next && modalStep === 'room' && modalRoomName) modalRoomName.focus();
 }
 
-function openRoomModal() {
+function openRoomModal(options = {}) {
   if (cropper && !cropper.hidden) return;
-  if (modalRoomName) modalRoomName.value = '';
-  if (modalRoomPassword) modalRoomPassword.value = '';
+  if (modalRoomName) modalRoomName.value = options.name || '';
+  if (modalRoomPassword) modalRoomPassword.value = options.password || '';
+  if (modalUsername) modalUsername.value = options.username || '';
+  pendingModal = { name: options.name || '', password: options.password || '', kind: 'screenshare' };
   setModalPermanent(false);
-  setModalRoomMode('join');
+  setModalKind('screenshare');
+  setModalRoomMode(options.mode === 'create' ? 'create' : 'join');
+  setModalStep(options.mode === 'create' ? 'kind' : 'room');
   setRoomModal(true);
 }
 
-async function joinAccountRoom({ name, password, create, permanent, onError, onBusy }) {
+async function enterJoinedRoom(info, password, joinName) {
+  if (info.permanent) cachePermanentRoom(info.name || joinName, password);
+  setRoomModal(false);
+  if (!roomView.hidden) {
+    await returnHome({ notifyServer: false });
+  }
+  currentRoomPassword = password || '';
+  await enterRoom(info);
+}
+
+async function joinAccountRoom({ name, password, username, create, permanent, kind, onError, onBusy }) {
   const fail = (message) => {
     if (onError) onError(message);
   };
   const busy = (value) => {
     if (onBusy) onBusy(value);
   };
-  if (!name || !password) {
+  if (!name || !password || (!accountUser && !username)) {
     fail(t('enter_fields'));
-    return false;
-  }
-  if (!accountUser) {
-    fail(t('auth_required'));
     return false;
   }
   busy(true);
@@ -856,7 +1074,8 @@ async function joinAccountRoom({ name, password, create, permanent, onError, onB
         body: JSON.stringify({
           name,
           password,
-          permanent: Boolean(permanent),
+          permanent: Boolean(accountUser && permanent),
+          kind: kind === 'watchparty' ? 'watchparty' : 'screenshare',
         }),
       });
       if (!createdRes.ok) {
@@ -866,23 +1085,20 @@ async function joinAccountRoom({ name, password, create, permanent, onError, onB
       const created = await createdRes.json();
       joinName = created.label || created.name || name;
     }
+    const payload = { name: joinName, password };
+    if (!accountUser) payload.username = username;
     const res = await fetch('/api/rooms/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ name: joinName, password }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       fail(await readError(res, t('could_not_enter')));
       return false;
     }
     const info = await res.json();
-    if (info.permanent) cachePermanentRoom(info.name || joinName, password);
-    setRoomModal(false);
-    if (!roomView.hidden) {
-      await returnHome({ notifyServer: false });
-    }
-    await enterRoom(info);
+    await enterJoinedRoom(info, password, joinName);
     return true;
   } catch {
     fail(t('could_not_reach'));
@@ -1124,9 +1340,13 @@ function applyUiLanguage() {
   syncMicControls();
   renderPeopleList();
   syncChatDeleteLabels();
+  syncWatchControls();
+  applyRoomChrome();
   applyLayout();
   refreshRemoteMedia();
   renderPins();
+  setHomeKind(homeKind);
+  setModalKind(modalKind);
   setModalRoomMode(modalRoomMode);
   if (pinTipKey === '__add__' && pinAddBtn && pinTip && !pinTip.hidden) {
     showPinTip(pinAddBtn, { nameKey: '__add__', label: t('join_room') }, { nameOnly: true });
@@ -1145,8 +1365,59 @@ function loadCachedRoom() {
   }
 }
 
+function rememberLastRoom(info) {
+  const prev = loadCachedRoom() || {};
+  const name = (info && (info.label || info.name)) || prev.name || '';
+  const password = currentRoomPassword || prev.password || '';
+  const username = (info && info.username) || myName || prev.username || '';
+  const nameKey = (info && info.nameKey) || currentNameKey || prev.nameKey || '';
+  if (!name || !password) return;
+  try {
+    localStorage.setItem(ROOM_CACHE_KEY, JSON.stringify({ name, password, username, nameKey }));
+  } catch {
+    // ignore
+  }
+}
+
 function cachePermanentRoom(name, password) {
-  localStorage.setItem(ROOM_CACHE_KEY, JSON.stringify({ name, password }));
+  if (password) currentRoomPassword = currentRoomPassword || password;
+  rememberLastRoom({ name });
+}
+
+function clearLastRoom() {
+  try {
+    localStorage.removeItem(ROOM_CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+async function resumeLastRoom() {
+  const cached = loadCachedRoom();
+  if (!cached || !cached.name || !cached.password) return false;
+  if (!accountUser && !cached.username) return false;
+  try {
+    const res = await fetch('/api/rooms/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        name: cached.name,
+        password: cached.password,
+        username: cached.username,
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 404) clearLastRoom();
+      return false;
+    }
+    const info = await res.json();
+    currentRoomPassword = cached.password;
+    await enterRoom(info);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function prefillJoinForm() {
@@ -1194,6 +1465,18 @@ function renderPeopleList() {
       name.textContent = item.self ? `${item.name} ${t('you_suffix')}` : item.name;
 
       li.append(mic, avatar, name);
+      if (watchActive() && iAmCreator && !item.self) {
+        const hostBtn = document.createElement('button');
+        hostBtn.type = 'button';
+        hostBtn.className = 'person-host';
+        hostBtn.textContent = t('watch_make_host');
+        if (watchState && watchState.hostPeerId === item.id) hostBtn.hidden = true;
+        hostBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          makeWatchHost(item.id);
+        });
+        li.append(hostBtn);
+      }
       if (!item.self && iAmCreator) {
         const kick = document.createElement('button');
         kick.type = 'button';
@@ -1331,7 +1614,13 @@ function isLive(pane) {
 }
 
 function allPanes() {
-  return [paneYou, ...[...peers.values()].map((peer) => peer.pane)];
+  const panes = [];
+  if (paneWatch && watchActive()) panes.push(paneWatch);
+  if (paneYou && !paneYou.hidden) panes.push(paneYou);
+  for (const peer of peers.values()) {
+    if (peer.pane && !peer.pane.hidden) panes.push(peer.pane);
+  }
+  return panes;
 }
 
 function peerByPc(pc) {
@@ -1342,6 +1631,7 @@ function peerByPc(pc) {
 }
 
 function getFeaturedPane() {
+  if (featured === 'watch') return paneWatch;
   if (featured === 'you') return paneYou;
   return peers.get(featured)?.pane || paneYou;
 }
@@ -1407,15 +1697,20 @@ function syncPipButtons() {
 }
 
 function applyLayout() {
-  if (featured !== 'you' && !peers.has(featured)) featured = 'you';
-  const liveRemote = [...peers.values()].find((peer) => isLive(peer.pane));
-  if (featured === 'you' && !isLive(paneYou) && liveRemote) featured = liveRemote.id;
-  if (featured !== 'you' && (!peers.has(featured) || !isLive(peers.get(featured).pane))) {
-    featured = isLive(paneYou) ? 'you' : liveRemote ? liveRemote.id : 'you';
+  if (paneWatch) paneWatch.hidden = !watchActive();
+  if (watchActive()) {
+    featured = 'watch';
+  } else {
+    if (featured === 'watch' || (featured !== 'you' && !peers.has(featured))) featured = 'you';
+    const liveRemote = [...peers.values()].find((peer) => isLive(peer.pane));
+    if (featured === 'you' && paneYou && !paneYou.hidden && !isLive(paneYou) && liveRemote) featured = liveRemote.id;
+    if (featured !== 'you' && featured !== 'watch' && (!peers.has(featured) || !isLive(peers.get(featured).pane))) {
+      featured = paneYou && !paneYou.hidden && isLive(paneYou) ? 'you' : liveRemote ? liveRemote.id : 'you';
+    }
   }
 
   for (const pane of allPanes()) {
-    const id = pane === paneYou ? 'you' : pane.dataset.peer;
+    const id = pane === paneWatch ? 'watch' : pane === paneYou ? 'you' : pane.dataset.peer;
     const isFeatured = featured === id;
     pane.removeAttribute('title');
     pane.dataset.slot = isFeatured ? 'featured' : 'pip';
@@ -1431,8 +1726,13 @@ function applyLayout() {
       volume.title = t('volume');
       volume.setAttribute('aria-label', t('volume'));
     }
-    if (isFeatured) stage.insertBefore(pane, pipRail);
-    else pipRail.append(pane);
+    if (isFeatured) {
+      if (pane.parentNode !== stage || pane.nextSibling !== pipRail) {
+        stage.insertBefore(pane, pipRail);
+      }
+    } else if (pane.parentNode !== pipRail) {
+      pipRail.append(pane);
+    }
   }
   syncPipButtons();
   placeCamChrome();
@@ -1440,9 +1740,41 @@ function applyLayout() {
 
 function setPeerStatus() {
   const count = (myName ? 1 : 0) + peers.size;
-  if (peerCount) peerCount.textContent = `${count} / ${MAX_PEOPLE}`;
+  if (peerCount) {
+    peerCount.textContent = roomKind === 'watchparty' ? String(count) : `${count} / ${MAX_PEOPLE}`;
+  }
   peerStatus.dataset.state = count > 1 ? 'connected' : 'waiting';
   renderPeopleList();
+}
+
+function isWatchpartyRoom() {
+  return roomKind === 'watchparty';
+}
+
+function watchActive() {
+  return Boolean(watchState && watchState.sourceType);
+}
+
+function iAmWatchHost() {
+  if (!watchState || !myId) return false;
+  if (watchState.hostPeerId && watchState.hostPeerId === myId) return true;
+  if (watchState.hostUserId && accountUser && Number(watchState.hostUserId) === Number(accountUser.id)) return true;
+  return false;
+}
+
+function applyRoomChrome() {
+  const watchOnly = isWatchpartyRoom();
+  if (shareBtn) shareBtn.hidden = watchOnly;
+  if (changeBtn) changeBtn.hidden = watchOnly || !localStream;
+  if (cameraBtn) cameraBtn.hidden = watchOnly;
+  if (floatBtn) floatBtn.hidden = watchOnly || !desktop;
+  if (paneYou) paneYou.hidden = watchOnly;
+  if (watchBtn) {
+    watchBtn.hidden = !canManageWatch;
+    watchBtn.dataset.live = watchActive() ? 'true' : 'false';
+    watchBtn.setAttribute('aria-expanded', isPopOpen(watchSheet) ? 'true' : 'false');
+  }
+  if (watchStopBtn) watchStopBtn.hidden = !watchActive() || !canManageWatch;
 }
 
 function showRoomError(message) {
@@ -1463,6 +1795,7 @@ function setLocalSharing(sharing) {
     featured = 'you';
   }
   setPaneLive(paneYou, sharing, sharing ? 'Live' : 'Idle');
+  applyRoomChrome();
 }
 
 function fullscreenElement() {
@@ -1998,6 +2331,7 @@ function attachRemoteMic(peer, mid, track) {
   el.autoplay = true;
   el.playsInline = true;
   el.srcObject = stream;
+  el.play().catch(() => {});
   const ctx = ensureVoiceCtx();
   ctx.resume().catch(() => {});
   try {
@@ -3077,7 +3411,7 @@ function addRemoteCamera(peer, mid, track) {
   if (live.length) bindRemoteVideo(peer);
   else {
     clearPaneVideo(peer.video);
-    peer.unmute.hidden = true;
+    hideUnmute(peer);
   }
   restoreOrphanScreen(peer);
   refreshRemoteMedia();
@@ -3118,7 +3452,7 @@ function clearRemoteScreen(peer) {
   peer.boundTrackIds = '';
   setPaneLive(peer.pane, false, 'Idle');
   clearPaneVideo(peer.video);
-  peer.unmute.hidden = true;
+  hideUnmute(peer);
   if (featuredView.kind === 'camera') refreshRemoteMedia();
 }
 
@@ -3323,8 +3657,25 @@ function watchPlaybackHealth(peer) {
   }, 1000);
 }
 
+function hideUnmute(peer) {
+  if (peer && peer.unmute) peer.unmute.hidden = true;
+}
+
 async function playRemote(peer) {
   bindRemoteVideo(peer);
+  if (desktop) mediaUnlocked = true;
+  if (desktop) {
+    peer.video.muted = false;
+    applyPeerVolume(peer);
+    try {
+      await peer.video.play();
+    } catch {
+      await peer.video.play().catch(() => {});
+    }
+    hideUnmute(peer);
+    if (peer.voiceEl) peer.voiceEl.play().catch(() => {});
+    return true;
+  }
   peer.video.muted = true;
   try {
     await peer.video.play();
@@ -3333,7 +3684,7 @@ async function playRemote(peer) {
   }
   if (!remoteHasAudio(peer)) {
     peer.video.muted = false;
-    peer.unmute.hidden = true;
+    hideUnmute(peer);
     return true;
   }
   if (!mediaUnlocked) {
@@ -3343,7 +3694,7 @@ async function playRemote(peer) {
   peer.video.muted = false;
   try {
     await peer.video.play();
-    peer.unmute.hidden = true;
+    hideUnmute(peer);
     return true;
   } catch {
     peer.video.muted = true;
@@ -3377,7 +3728,7 @@ function watchRemoteTrack(peer, track) {
     setPaneLive(peer.pane, live.length > 0, live.length ? 'Live' : 'Idle');
     if (!live.length) {
       clearPaneVideo(peer.video);
-      peer.unmute.hidden = true;
+      hideUnmute(peer);
       if (featuredView.kind === 'camera') refreshRemoteMedia();
       return;
     }
@@ -3427,6 +3778,7 @@ function createRemotePane(id) {
   `;
   const video = pane.querySelector('video');
   const unmute = pane.querySelector('.unmute');
+  if (desktop && unmute) unmute.hidden = true;
   const reloadBtn = pane.querySelector('.pane-reload');
   const pipBtn = pane.querySelector('.pane-pip');
   const volumeSlider = pane.querySelector('.pane-volume');
@@ -3596,6 +3948,10 @@ function ensurePeer(id, name, meta) {
     }
     if (shouldTreatAsCamera(state, mid, track)) {
       addRemoteCamera(state, mid, track);
+      return;
+    }
+    if (isWatchpartyRoom() && track.kind === 'video') {
+      track.enabled = false;
       return;
     }
     if (track.kind === 'video') {
@@ -3788,8 +4144,18 @@ async function handleRoomMessage(msg) {
       const conn = existing.pc.connectionState;
       if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
     }
+    if (msg.kind) roomKind = msg.kind === 'watchparty' ? 'watchparty' : 'screenshare';
+    if (Object.prototype.hasOwnProperty.call(msg, 'watch')) {
+      applyWatchState(msg.watch, { action: 'set', canManageWatch: iAmCreator || iAmWatchHost(), serverAt: Date.now() });
+    }
+    applyRoomChrome();
     setPeerStatus();
     refreshRemoteMedia();
+    return;
+  }
+
+  if (msg.type === 'watch') {
+    applyIncomingWatch(msg.state, msg.action, msg.serverAt);
     return;
   }
 
@@ -3800,7 +4166,7 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'kicked') {
-    returnHome({ notifyServer: false, message: t('kicked') });
+    returnHome({ notifyServer: false, forgetRoom: true, message: t('kicked') });
     return;
   }
 
@@ -3860,7 +4226,7 @@ function connectSocket() {
           const res = await fetch('/api/me', { credentials: 'same-origin' });
           if (res.status === 404 || res.status === 401) {
             const message = res.status === 404 ? t('room_not_found') : '';
-            await returnHome({ notifyServer: false, message });
+            await returnHome({ notifyServer: false, forgetRoom: true, message });
             return;
           }
         } catch {
@@ -4003,15 +4369,699 @@ function connectChat() {
   chatSocket.on('chat:deleted', (payload) => removeChatMessage(payload && payload.id));
 }
 
+function disconnectWatch() {
+  if (!watchSocket) return;
+  watchSocket.removeAllListeners();
+  watchSocket.disconnect();
+  watchSocket = null;
+}
+
+function applyIncomingWatch(state, action, serverAt) {
+  applyWatchState(state, {
+    action,
+    serverAt,
+    canManageWatch: iAmCreator || (state && (
+      (state.hostPeerId && state.hostPeerId === myId)
+      || (state.hostUserId && accountUser && Number(state.hostUserId) === Number(accountUser.id))
+    )),
+  });
+}
+
+function connectWatch() {
+  disconnectWatch();
+  const socketIo = window.io;
+  if (typeof socketIo !== 'function') return;
+  watchSocket = socketIo({ path: '/watch.io', withCredentials: true });
+  watchSocket.on('watch:event', (msg) => {
+    if (!msg) return;
+    applyIncomingWatch(msg.state, msg.action, msg.serverAt);
+  });
+}
+
+function emitWatchControl(action, extra = {}) {
+  if (!watchSocket) return;
+  const payload = {
+    action,
+    mediaTime: extra.mediaTime,
+    paused: extra.paused,
+    sentAt: Date.now(),
+  };
+  if (watchSocket.connected) {
+    watchSocket.emit('watch:control', payload);
+    return;
+  }
+  watchSocket.once('connect', () => {
+    if (watchSocket) watchSocket.emit('watch:control', payload);
+  });
+}
+
+function parseTwitchWatchUrl(raw) {
+  try {
+    const href = String(raw || '').trim();
+    const url = new URL(/^[a-z]+:\/\//i.test(href) ? href : `https://${href}`);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (host === 'clips.twitch.tv' || url.searchParams.get('clip') || parts[0] === 'clip' || parts[1] === 'clip') {
+      return 'clip';
+    }
+    if (
+      host === 'twitch.tv'
+      || host === 'm.twitch.tv'
+      || host === 'player.twitch.tv'
+    ) {
+      if (url.searchParams.get('video') || parts[0] === 'videos' || parts[0] === 'video') return 'vod';
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function setWatchError(message) {
+  if (!watchError) return;
+  if (!message) {
+    watchError.hidden = true;
+    watchError.textContent = '';
+    return;
+  }
+  watchError.hidden = false;
+  watchError.textContent = message;
+}
+
+function setWatchSheet(open) {
+  if (!watchSheet) return;
+  if (open) {
+    setRoomModal(false);
+    setPeopleOpen(false);
+    setMicOpen(false);
+    setWatchError('');
+    if (watchUrlInput) watchUrlInput.value = (watchState && watchState.sourceUrl) || '';
+  }
+  setPopOpen(watchSheet, open);
+  applyRoomChrome();
+  if (open && watchUrlInput) watchUrlInput.focus();
+}
+
+function formatWatchTime(sec) {
+  const total = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatWatchClock(time, duration) {
+  const now = formatWatchTime(time);
+  return duration > 0 ? `${now} / ${formatWatchTime(duration)}` : now;
+}
+
+function syncWatchMute() {
+  const muted = watchVolumeValue === 0;
+  if (watchMuteBtn) {
+    watchMuteBtn.dataset.muted = muted ? 'true' : 'false';
+    watchMuteBtn.setAttribute('aria-label', muted ? t('unmute') : t('mute'));
+  }
+}
+
+function syncWatchFullscreen() {
+  const on = Boolean(paneWatch && fullscreenElement() === paneWatch);
+  if (watchFsBtn) {
+    watchFsBtn.dataset.fs = on ? 'true' : 'false';
+    watchFsBtn.setAttribute('aria-label', on ? t('exit_fullscreen') : t('fullscreen'));
+  }
+}
+
+function twitchParents() {
+  const host = location.hostname;
+  const parents = new Set([host]);
+  if (host === 'localhost' || host === '127.0.0.1') {
+    parents.add('localhost');
+    parents.add('127.0.0.1');
+  }
+  return [...parents];
+}
+
+function isTwitchLive(state) {
+  return Boolean(state && state.sourceType === 'twitch');
+}
+
+function isHlsUrl(raw) {
+  const href = String(raw || '');
+  try {
+    const url = new URL(href, location.origin);
+    return /\.m3u8(\b|$)/i.test(`${url.pathname}${url.search}`);
+  } catch {
+    return /\.m3u8(\b|$)/i.test(href);
+  }
+}
+
+function isHlsSource(state) {
+  return Boolean(state && (state.sourceType === 'hls' || isHlsUrl(state.sourceUrl)));
+}
+
+function isWatchLiveHls() {
+  return Boolean(watchPlayer && watchPlayer.kind === 'hls' && watchPlayer.live);
+}
+
+function watchSyncable(state) {
+  return Boolean(state && (
+    state.sourceType === 'youtube'
+    || state.sourceType === 'media'
+    || state.sourceType === 'hls'
+    || isHlsSource(state)
+  ));
+}
+
+function twitchEmbedSrc(state) {
+  const parents = twitchParents().map((item) => `parent=${encodeURIComponent(item)}`).join('&');
+  return `https://player.twitch.tv/?channel=${encodeURIComponent(state.videoId || '')}&${parents}&autoplay=true`;
+}
+
+function youtubeReady() {
+  return Boolean(
+    watchPlayer
+    && watchPlayer.kind === 'youtube'
+    && watchPlayer.ready
+    && watchPlayer.yt
+    && typeof watchPlayer.yt.getCurrentTime === 'function'
+  );
+}
+
+let hlsApiPromise = null;
+
+function loadHlsApi() {
+  if (window.Hls) return Promise.resolve();
+  if (hlsApiPromise) return hlsApiPromise;
+  hlsApiPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.id = 'hls-js';
+    script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      hlsApiPromise = null;
+      reject(new Error('hls'));
+    };
+    document.head.append(script);
+  });
+  return hlsApiPromise;
+}
+
+function loadYoutubeApi() {
+  if (window.YT && window.YT.Player) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prev === 'function') prev();
+      resolve();
+    };
+    if (!document.getElementById('yt-iframe-api')) {
+      const script = document.createElement('script');
+      script.id = 'yt-iframe-api';
+      script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      script.onerror = () => reject(new Error('youtube'));
+      document.head.append(script);
+    }
+    window.setTimeout(() => {
+      if (window.YT && window.YT.Player) resolve();
+    }, 50);
+  });
+}
+
+function expectedWatchTime(state, serverAt) {
+  if (!state) return 0;
+  if (state.paused) return Number(state.mediaTime) || 0;
+  const sent = Number(serverAt || state.updatedAt) || Date.now();
+  return (Number(state.mediaTime) || 0) + Math.max(0, (Date.now() - sent) / 1000);
+}
+
+function readLocalWatchTime() {
+  if (!watchPlayer) return 0;
+  if (watchPlayer.kind === 'youtube') {
+    if (!youtubeReady()) return 0;
+    return Number(watchPlayer.yt.getCurrentTime()) || 0;
+  }
+  if (watchPlayer.el && Number.isFinite(watchPlayer.el.currentTime)) {
+    return watchPlayer.el.currentTime;
+  }
+  return 0;
+}
+
+function readLocalWatchPaused() {
+  if (!watchPlayer) return true;
+  if (watchPlayer.kind === 'youtube') {
+    if (!youtubeReady()) return true;
+    return watchPlayer.yt.getPlayerState() !== 1;
+  }
+  if (watchPlayer.el) return watchPlayer.el.paused;
+  return true;
+}
+
+function applyWatchVolume() {
+  const vol = Math.round(watchVolumeValue * 100);
+  if (watchVolume) watchVolume.value = String(vol);
+  if (watchVolumeValue > 0) watchVolumeRestore = watchVolumeValue;
+  syncWatchMute();
+  if (!watchPlayer) return;
+  if (youtubeReady()) {
+    watchPlayer.yt.setVolume(vol);
+    if (vol === 0 && watchPlayer.yt.mute) watchPlayer.yt.mute();
+    else if (watchPlayer.yt.unMute) watchPlayer.yt.unMute();
+  }
+  if (watchPlayer.el && (watchPlayer.kind === 'media' || watchPlayer.kind === 'hls')) {
+    watchPlayer.el.muted = watchVolumeValue === 0;
+    watchPlayer.el.volume = watchVolumeValue;
+  }
+}
+
+function destroyWatchPlayer() {
+  if (watchTickTimer) {
+    clearInterval(watchTickTimer);
+    watchTickTimer = 0;
+  }
+  const yt = watchPlayer && watchPlayer.yt;
+  const hls = watchPlayer && watchPlayer.hls;
+  if (watchPlayer) watchPlayer.ready = false;
+  watchPlayer = null;
+  if (hls && typeof hls.destroy === 'function') {
+    try { hls.destroy(); } catch { /* ignore */ }
+  }
+  if (yt && typeof yt.destroy === 'function') {
+    try { yt.destroy(); } catch { /* ignore */ }
+  }
+  if (watchStage) watchStage.replaceChildren();
+}
+
+async function postWatch(body) {
+  const res = await fetch('/api/watch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await readError(res, t('watch_fail')));
+  return res.json();
+}
+
+function readLocalWatchDuration() {
+  if (!watchPlayer || isWatchLiveHls()) return 0;
+  if (watchPlayer.kind === 'youtube' && youtubeReady() && watchPlayer.yt.getDuration) {
+    return Number(watchPlayer.yt.getDuration()) || 0;
+  }
+  if (watchPlayer.el && Number.isFinite(watchPlayer.el.duration) && watchPlayer.el.duration > 0) {
+    return watchPlayer.el.duration;
+  }
+  return 0;
+}
+
+function startWatchClock() {
+  if (watchTickTimer) clearInterval(watchTickTimer);
+  watchTickTimer = 0;
+  if (!watchSyncable(watchState)) return;
+  watchTickTimer = window.setInterval(() => {
+    if (!watchSyncable(watchState)) return;
+    if (isWatchLiveHls()) {
+      if (watchTime) watchTime.textContent = t('watch_live');
+      return;
+    }
+    const time = readLocalWatchTime();
+    if (watchTime) watchTime.textContent = formatWatchClock(time, readLocalWatchDuration());
+    if (watchSeek && iAmWatchHost()) {
+      const duration = readLocalWatchDuration();
+      if (duration > 0) {
+        watchSeek.max = '1000';
+        watchSeek.value = String(Math.round((time / duration) * 1000));
+      }
+    }
+  }, 250);
+}
+
+function seekWatchLocal(seconds, paused, options = {}) {
+  if (!watchPlayer) return;
+  if (watchPlayer.kind === 'youtube' && !youtubeReady()) return;
+  const shouldSeek = options.seek !== false && Number.isFinite(Number(seconds));
+  watchApplying = true;
+  if (watchPlayer.kind === 'youtube') {
+    if (shouldSeek) watchPlayer.yt.seekTo(seconds, true);
+    if (paused) watchPlayer.yt.pauseVideo();
+    else watchPlayer.yt.playVideo();
+  } else if (watchPlayer.el) {
+    if (shouldSeek) watchPlayer.el.currentTime = seconds;
+    if (paused) watchPlayer.el.pause();
+    else watchPlayer.el.play().catch(() => {});
+  }
+  window.setTimeout(() => {
+    watchApplying = false;
+  }, 400);
+}
+
+function applyWatchEvent(state, serverAt, action) {
+  if (!watchPlayer || !watchSyncable(state)) return;
+  if (action === 'tick') return;
+  if (isWatchLiveHls()) {
+    const paused = action === 'pause' || (action !== 'play' && Boolean(state.paused));
+    seekWatchLocal(0, paused, { seek: false });
+    return;
+  }
+  const snapshot = action === 'set' || action === 'host' || !action;
+  const target = snapshot
+    ? expectedWatchTime(state, serverAt)
+    : (Number(state.mediaTime) || 0);
+  if (action === 'play') {
+    seekWatchLocal(target, false);
+    return;
+  }
+  if (action === 'pause') {
+    seekWatchLocal(target, true);
+    return;
+  }
+  seekWatchLocal(target, Boolean(state.paused));
+}
+
+function syncWatchControls() {
+  const host = iAmWatchHost();
+  const live = isTwitchLive(watchState);
+  const liveHls = isWatchLiveHls();
+  const media = watchSyncable(watchState);
+  const seekable = media && !liveHls;
+  if (paneWatch) {
+    paneWatch.dataset.player = live ? 'twitch-live' : ((watchState && watchState.sourceType) || '');
+  }
+  if (watchControls) watchControls.hidden = !watchActive();
+  if (watchTransport) watchTransport.hidden = !media;
+  if (watchPlayBtn) {
+    const paused = Boolean(watchState && watchState.paused);
+    watchPlayBtn.hidden = !host || !media;
+    watchPlayBtn.dataset.paused = paused ? 'true' : 'false';
+    watchPlayBtn.setAttribute('aria-label', paused ? t('play') : t('pause'));
+  }
+  if (watchSeek) watchSeek.hidden = !host || !seekable;
+  if (watchTime) {
+    watchTime.hidden = !media;
+    if (liveHls) {
+      watchTime.textContent = t('watch_live');
+    } else if (media) {
+      watchTime.textContent = formatWatchClock(
+        watchState ? watchState.mediaTime : 0,
+        readLocalWatchDuration()
+      );
+    }
+  }
+  syncWatchMute();
+  syncWatchFullscreen();
+  if (watchStateLabel) {
+    watchStateLabel.textContent = live
+      ? t('watch_twitch')
+      : (liveHls ? t('watch_live') : (host ? t('watch_now_host') : t('watch_host')));
+  }
+}
+
+function mountWatchTwitchLive(state) {
+  destroyWatchPlayer();
+  if (!watchStage) return;
+  const frame = document.createElement('iframe');
+  frame.src = twitchEmbedSrc(state);
+  frame.allowFullscreen = true;
+  frame.setAttribute('allow', 'autoplay; fullscreen');
+  watchStage.append(frame);
+  watchPlayer = { kind: 'twitch', el: frame, ready: true, live: true, videoId: state.videoId };
+}
+
+function mountWatchTwitch(state) {
+  if (/^v?\d+$/i.test(String(state.videoId || ''))) {
+    destroyWatchPlayer();
+    showRoomError(t('watch_vod'));
+    return;
+  }
+  mountWatchTwitchLive(state);
+}
+
+function createWatchVideo(state, serverAt) {
+  const video = document.createElement('video');
+  video.playsInline = true;
+  video.autoplay = !state.paused;
+  video.addEventListener('error', () => {
+    showRoomError(watchPlayer && watchPlayer.kind === 'hls' ? t('watch_hls_fail') : t('watch_media_fail'));
+  });
+  video.addEventListener('loadedmetadata', () => {
+    if (watchPlayer && (!Number.isFinite(video.duration) || video.duration === Infinity)) {
+      watchPlayer.live = true;
+      syncWatchControls();
+    }
+    applyWatchEvent(state, serverAt, 'set');
+  });
+  video.addEventListener('canplay', () => {
+    if (!watchPlayer || isWatchLiveHls()) return;
+    applyWatchEvent(state, serverAt, 'set');
+  }, { once: true });
+  video.addEventListener('play', () => {
+    if (watchApplying || !iAmWatchHost()) return;
+    emitWatchControl('play', { mediaTime: video.currentTime });
+  });
+  video.addEventListener('pause', () => {
+    if (watchApplying || !iAmWatchHost()) return;
+    emitWatchControl('pause', { mediaTime: video.currentTime });
+  });
+  video.addEventListener('seeked', () => {
+    if (watchApplying || !iAmWatchHost() || isWatchLiveHls()) return;
+    emitWatchControl('seek', { mediaTime: video.currentTime, paused: video.paused });
+  });
+  return video;
+}
+
+function mountWatchMedia(state, serverAt) {
+  destroyWatchPlayer();
+  if (!watchStage) return;
+  const video = createWatchVideo(state, serverAt);
+  video.src = state.sourceUrl;
+  watchStage.append(video);
+  watchPlayer = { kind: 'media', el: video, url: state.sourceUrl };
+  applyWatchVolume();
+}
+
+async function mountWatchHls(state, serverAt) {
+  const seq = watchRenderSeq;
+  destroyWatchPlayer();
+  if (!watchStage) return;
+  const video = createWatchVideo(state, serverAt);
+  watchStage.append(video);
+  watchPlayer = { kind: 'hls', el: video, url: state.sourceUrl, live: false, hls: null };
+  applyWatchVolume();
+
+  const native = Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
+  const useNative = () => {
+    video.src = state.sourceUrl;
+  };
+
+  try {
+    await loadHlsApi();
+  } catch {
+    if (native) {
+      useNative();
+      return;
+    }
+    showRoomError(t('watch_hls_fail'));
+    return;
+  }
+  if (seq !== watchRenderSeq) return;
+  if (!window.Hls || !window.Hls.isSupported()) {
+    if (native) {
+      useNative();
+      return;
+    }
+    showRoomError(t('watch_hls_fail'));
+    return;
+  }
+
+  const hls = new window.Hls({ enableWorker: true, backBufferLength: 90 });
+  if (!watchPlayer || watchPlayer.kind !== 'hls') {
+    hls.destroy();
+    return;
+  }
+  watchPlayer.hls = hls;
+  hls.on(window.Hls.Events.LEVEL_LOADED, (_evt, data) => {
+    if (!watchPlayer || watchPlayer.hls !== hls) return;
+    if (data.details && data.details.live) {
+      watchPlayer.live = true;
+      syncWatchControls();
+    }
+  });
+  hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+    if (!data || !data.fatal || !watchPlayer || watchPlayer.hls !== hls) return;
+    showRoomError(t('watch_media_fail'));
+  });
+  hls.attachMedia(video);
+  hls.loadSource(state.sourceUrl);
+}
+
+async function mountWatchYoutube(state, serverAt) {
+  const seq = watchRenderSeq;
+  destroyWatchPlayer();
+  if (!watchStage) return;
+  await loadYoutubeApi();
+  if (seq !== watchRenderSeq) return;
+  const frame = document.createElement('iframe');
+  frame.id = 'watch-yt-host';
+  const params = new URLSearchParams({
+    enablejsapi: '1',
+    origin: location.origin,
+    playsinline: '1',
+    rel: '0',
+    modestbranding: '1',
+    controls: '0',
+    autoplay: state.paused ? '0' : '1',
+  });
+  frame.src = `https://www.youtube.com/embed/${encodeURIComponent(state.videoId)}?${params}`;
+  frame.setAttribute('allow', 'autoplay; fullscreen; encrypted-media');
+  frame.allowFullscreen = true;
+  watchStage.append(frame);
+  watchPlayer = { kind: 'youtube', yt: null, ready: false, videoId: state.videoId };
+  watchPlayer.yt = new window.YT.Player(frame, {
+    host: 'https://www.youtube.com',
+    events: {
+      onReady: (event) => {
+        if (!watchPlayer || watchPlayer.kind !== 'youtube') return;
+        watchPlayer.ready = true;
+        applyWatchVolume();
+        applyWatchEvent(state, serverAt, 'set');
+        if (event.target && typeof event.target.setPlaybackQuality === 'function') {
+          event.target.setPlaybackQuality('hd1080');
+        }
+        startWatchClock();
+      },
+      onStateChange: (event) => {
+        if (!youtubeReady() || watchApplying || !iAmWatchHost() || !event.target) return;
+        const time = event.target.getCurrentTime();
+        if (event.data === 1) {
+          emitWatchControl('play', { mediaTime: time });
+        } else if (event.data === 2) {
+          emitWatchControl('pause', { mediaTime: time });
+        }
+      },
+    },
+  });
+}
+
+async function renderWatchPlayer(state, serverAt, action) {
+  const seq = ++watchRenderSeq;
+  if (!state) {
+    destroyWatchPlayer();
+    syncWatchControls();
+    applyLayout();
+    applyRoomChrome();
+    return;
+  }
+  const same = watchPlayer && (
+    (state.sourceType === 'youtube' && watchPlayer.kind === 'youtube' && watchPlayer.yt && watchPlayer.videoId === state.videoId)
+    || (state.sourceType === 'twitch' && watchPlayer.kind === 'twitch' && watchPlayer.videoId === state.videoId)
+    || (isHlsSource(state) && watchPlayer.kind === 'hls' && watchPlayer.url === state.sourceUrl)
+    || (state.sourceType === 'media' && !isHlsSource(state) && watchPlayer.kind === 'media' && watchPlayer.url === state.sourceUrl)
+  );
+  if (!same) {
+    if (state.sourceType === 'youtube') {
+      await mountWatchYoutube(state, serverAt);
+      if (watchPlayer) watchPlayer.videoId = state.videoId;
+    } else if (state.sourceType === 'twitch') {
+      mountWatchTwitch(state);
+      if (watchPlayer) watchPlayer.videoId = state.videoId;
+    } else if (isHlsSource(state)) {
+      await mountWatchHls(state, serverAt);
+    } else {
+      mountWatchMedia(state, serverAt);
+    }
+    if (seq !== watchRenderSeq) return;
+    applyLayout();
+    applyRoomChrome();
+    startWatchClock();
+  } else if (!iAmWatchHost()) {
+    applyWatchEvent(state, serverAt, action);
+  }
+  if (seq !== watchRenderSeq) return;
+  syncWatchControls();
+  if (iAmWatchHost()) startWatchClock();
+}
+
+function applyWatchState(state, extra = {}) {
+  watchState = state || null;
+  canManageWatch = Boolean(extra.canManageWatch) || iAmCreator || iAmWatchHost();
+  renderWatchPlayer(
+    watchState,
+    extra.serverAt || (watchState && watchState.updatedAt),
+    extra.action
+  ).catch((err) => {
+    console.error(err);
+    showRoomError(t('watch_fail'));
+  });
+  if (extra.action !== 'tick') renderPeopleList();
+}
+
+async function startWatchFromForm() {
+  let url = watchUrlInput ? watchUrlInput.value.trim() : '';
+  setWatchError('');
+  if (!url) {
+    setWatchError(t('watch_bad_url'));
+    return;
+  }
+  if (!/^[a-z]+:\/\//i.test(url)) url = `https://${url}`;
+  const twitchKind = parseTwitchWatchUrl(url);
+  if (twitchKind === 'clip') {
+    setWatchError(t('watch_clip'));
+    return;
+  }
+  if (twitchKind === 'vod') {
+    setWatchError(t('watch_vod'));
+    return;
+  }
+  if (watchStartBtn) watchStartBtn.disabled = true;
+  try {
+    const data = await postWatch({ action: 'set', url });
+    applyWatchState(data.watch, { action: 'set', canManageWatch: true });
+    setWatchSheet(false);
+  } catch (err) {
+    setWatchError(err && err.message ? err.message : t('watch_fail'));
+  } finally {
+    if (watchStartBtn) watchStartBtn.disabled = false;
+  }
+}
+
+async function stopWatchParty() {
+  try {
+    await postWatch({ action: 'stop' });
+    applyWatchState(null, { canManageWatch: iAmCreator });
+    setWatchSheet(false);
+  } catch (err) {
+    setWatchError(err && err.message ? err.message : t('watch_fail'));
+  }
+}
+
+async function makeWatchHost(peerId) {
+  try {
+    const data = await postWatch({ action: 'host', peerId });
+    applyWatchState(data.watch, { canManageWatch: true, serverAt: Date.now() });
+  } catch (err) {
+    showRoomError(err && err.message ? err.message : t('watch_fail'));
+  }
+}
+
 async function enterRoom(info) {
   leavingRoom = false;
+  if (desktop) {
+    mediaUnlocked = true;
+    unlockMedia();
+  }
+  rememberLastRoom(info);
   if (info && info.username) setYouName(info.username);
   iAmCreator = Boolean(info && info.isCreator);
   canEditIcon = Boolean(info && info.canEditIcon);
   currentNameKey = (info && info.nameKey) || '';
+  roomKind = info && info.kind === 'watchparty' ? 'watchparty' : 'screenshare';
+  canManageWatch = Boolean(info && info.canManageWatch);
+  applyWatchState(info && info.watch, { action: 'set', canManageWatch });
+  rememberGuestPinMeta();
   setRoomLabel(info && (info.label || info.name));
   setRoomInviteUrl(currentRoomLabel);
   setRoomIconButton(info);
+  applyRoomChrome();
   const configRes = await fetch('/api/config', { credentials: 'same-origin' });
   if (configRes.ok) {
     const config = await configRes.json();
@@ -4029,6 +5079,7 @@ async function enterRoom(info) {
   refreshRemoteMedia();
   await connectSocket();
   connectChat();
+  connectWatch();
   loadMicSettings();
   syncMicControls();
   await loadAccount();
@@ -4048,6 +5099,9 @@ function disconnectSocket() {
 
 async function returnHome(options = {}) {
   const notifyServer = options.notifyServer !== false;
+  if (options.forgetRoom !== false && (options.forgetRoom === true || notifyServer)) {
+    clearLastRoom();
+  }
   if (leavingRoom) return;
   leavingRoom = true;
   if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
@@ -4055,6 +5109,7 @@ async function returnHome(options = {}) {
   setMicOpen(false);
   setChatOpen(false, { restoreFocus: false });
   disconnectChat();
+  disconnectWatch();
   clearChatLog();
   stopShare();
   stopCamera();
@@ -4068,7 +5123,13 @@ async function returnHome(options = {}) {
   iAmCreator = false;
   canEditIcon = false;
   currentNameKey = '';
+  currentRoomPassword = '';
+  roomKind = 'screenshare';
+  canManageWatch = false;
+  applyWatchState(null);
+  setWatchSheet(false);
   setRoomIconButton(null);
+  applyRoomChrome();
   myId = null;
   if (notifyServer) {
     try {
@@ -4125,17 +5186,27 @@ async function readError(res, fallback) {
 
 modeJoin.addEventListener('click', () => {
   setHomeMode('join');
-  if (homeStep === 'room') roomNameInput.focus();
+  setHomeStep('room');
+  roomNameInput.focus();
 });
 
 modeCreate.addEventListener('click', () => {
   setHomeMode('create');
-  if (homeStep === 'room') roomNameInput.focus();
+  setHomeStep('kind');
 });
+
+if (homeKindScreenshare) homeKindScreenshare.addEventListener('click', () => setHomeKind('screenshare'));
+if (homeKindWatchparty) homeKindWatchparty.addEventListener('click', () => setHomeKind('watchparty'));
 
 if (homeBack) {
   homeBack.addEventListener('click', () => {
     setHomeStep('room');
+    setHomeMode(homeMode);
+  });
+}
+if (homeRoomBack) {
+  homeRoomBack.addEventListener('click', () => {
+    setHomeStep('kind');
     setHomeMode(homeMode);
   });
 }
@@ -4213,6 +5284,12 @@ loginForm.addEventListener('submit', async (event) => {
     await submitAccount();
     return;
   }
+  if (homeStep === 'kind') {
+    pendingHome = { ...pendingHome, kind: homeKind };
+    setHomeStep('room');
+    setHomeMode(homeMode);
+    return;
+  }
   if (homeStep === 'room') {
     const name = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -4232,6 +5309,7 @@ loginForm.addEventListener('submit', async (event) => {
             name,
             password,
             permanent: Boolean(accountUser && homePermanent),
+            kind: homeKind,
           }),
         });
         if (!res.ok) {
@@ -4240,7 +5318,7 @@ loginForm.addEventListener('submit', async (event) => {
           return;
         }
         const info = await res.json();
-        pendingHome = { name: info.label || name, password };
+        pendingHome = { name: info.label || name, password, kind: homeKind };
       } catch {
         loginError.textContent = t('could_not_reach');
         loginError.hidden = false;
@@ -4249,7 +5327,7 @@ loginForm.addEventListener('submit', async (event) => {
         loginBtn.disabled = false;
       }
     } else {
-      pendingHome = { name, password };
+      pendingHome = { name, password, kind: homeKind };
     }
     if (accountUser) {
       loginBtn.disabled = true;
@@ -4270,6 +5348,7 @@ loginForm.addEventListener('submit', async (event) => {
           return;
         }
         const info = await res.json();
+        currentRoomPassword = payload.password;
         if (info.permanent) cachePermanentRoom(info.name || payload.name.trim(), payload.password);
         await enterRoom(info);
       } catch {
@@ -4303,6 +5382,7 @@ loginForm.addEventListener('submit', async (event) => {
       return;
     }
     const info = await res.json();
+    currentRoomPassword = payload.password;
     if (info.permanent) cachePermanentRoom(info.name || payload.name.trim(), payload.password);
     usernameInput.value = '';
     await enterRoom(info);
@@ -4325,6 +5405,7 @@ document.addEventListener('enterpictureinpicture', syncPipButtons);
 document.addEventListener('leavepictureinpicture', syncPipButtons);
 
 shareBtn.addEventListener('click', () => {
+  if (isWatchpartyRoom()) return;
   if (localStream) stopShare();
   else startShare();
 });
@@ -4372,6 +5453,11 @@ if (chatForm && chatInput) {
 }
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && isPopOpen(watchSheet)) {
+    event.preventDefault();
+    setWatchSheet(false);
+    return;
+  }
   if (event.key === 'Escape' && chatOpen) {
     if (isPopOpen(roomModal) || (cropper && !cropper.hidden)) return;
     event.preventDefault();
@@ -4384,6 +5470,7 @@ changeBtn.addEventListener('click', () => {
 });
 
 cameraBtn.addEventListener('click', () => {
+  if (isWatchpartyRoom()) return;
   if (cameraStream) stopCamera();
   else startCamera();
 });
@@ -4493,6 +5580,14 @@ if (modalModeCreate) modalModeCreate.addEventListener('click', () => {
   setModalRoomError('');
   setModalRoomMode('create');
 });
+if (modalKindScreenshare) modalKindScreenshare.addEventListener('click', () => setModalKind('screenshare'));
+if (modalKindWatchparty) modalKindWatchparty.addEventListener('click', () => setModalKind('watchparty'));
+if (modalBack) {
+  modalBack.addEventListener('click', () => {
+    setModalRoomError('');
+    setModalStep('room');
+  });
+}
 if (modalModeTemporary) {
   modalModeTemporary.addEventListener('click', () => {
     setModalRoomError('');
@@ -4508,13 +5603,32 @@ if (modalModePermanent) {
 if (roomModalForm) {
   roomModalForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const name = modalRoomName ? modalRoomName.value.trim() : '';
-    const password = modalRoomPassword ? modalRoomPassword.value : '';
+    setModalRoomError('');
+    if (modalStep === 'kind') {
+      pendingModal = { ...pendingModal, kind: modalKind };
+      setModalStep('room');
+      return;
+    }
+    if (modalStep === 'room') {
+      const name = modalRoomName ? modalRoomName.value.trim() : '';
+      const password = modalRoomPassword ? modalRoomPassword.value : '';
+      if (!name || !password) {
+        setModalRoomError(t('enter_fields'));
+        return;
+      }
+      pendingModal = { name, password, kind: modalKind };
+      if (!accountUser) {
+        setModalStep('user');
+        return;
+      }
+    }
     await joinAccountRoom({
-      name,
-      password,
+      name: pendingModal.name || (modalRoomName && modalRoomName.value.trim()) || '',
+      password: pendingModal.password || (modalRoomPassword && modalRoomPassword.value) || '',
+      username: modalUsername ? modalUsername.value.trim() : '',
       create: modalRoomMode === 'create',
       permanent: modalPermanentOn,
+      kind: pendingModal.kind || modalKind,
       onError: setModalRoomError,
       onBusy: (busy) => {
         if (modalRoomSubmit) modalRoomSubmit.disabled = busy;
@@ -4618,15 +5732,104 @@ document.addEventListener('keydown', (event) => {
     closeCropper();
     return;
   }
+  if (isPopOpen(watchSheet)) {
+    event.preventDefault();
+    setWatchSheet(false);
+    return;
+  }
   if (isPopOpen(roomModal)) {
     event.preventDefault();
     setRoomModal(false);
   }
 });
 
+if (watchBtn) {
+  watchBtn.addEventListener('click', () => {
+    if (!canManageWatch && !watchActive()) return;
+    setWatchSheet(!isPopOpen(watchSheet));
+  });
+}
+if (watchSheet) {
+  watchSheet.addEventListener('click', (event) => {
+    if (event.target === watchSheet) setWatchSheet(false);
+  });
+}
+if (watchSheetClose) watchSheetClose.addEventListener('click', () => setWatchSheet(false));
+if (watchForm) {
+  watchForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    startWatchFromForm();
+  });
+}
+if (watchStopBtn) watchStopBtn.addEventListener('click', () => stopWatchParty());
+if (watchPlayBtn) {
+  watchPlayBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!iAmWatchHost() || !watchState) return;
+    const pause = !readLocalWatchPaused();
+    seekWatchLocal(readLocalWatchTime(), pause, { seek: false });
+    if (watchPlayBtn) {
+      watchPlayBtn.dataset.paused = pause ? 'true' : 'false';
+      watchPlayBtn.setAttribute('aria-label', pause ? t('play') : t('pause'));
+    }
+    emitWatchControl(pause ? 'pause' : 'play', { mediaTime: readLocalWatchTime() });
+  });
+}
+if (watchMuteBtn) {
+  watchMuteBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (watchVolumeValue > 0) {
+      watchVolumeRestore = watchVolumeValue;
+      watchVolumeValue = 0;
+    } else {
+      watchVolumeValue = watchVolumeRestore || 1;
+    }
+    applyWatchVolume();
+  });
+}
+if (watchSeek) {
+  watchSeek.addEventListener('pointerdown', (event) => event.stopPropagation());
+  watchSeek.addEventListener('input', () => {
+    if (!iAmWatchHost() || !watchPlayer) return;
+    const max = readLocalWatchDuration();
+    const next = (Number(watchSeek.value) / Number(watchSeek.max || 1000)) * max;
+    seekWatchLocal(next, readLocalWatchPaused());
+  });
+  watchSeek.addEventListener('change', () => {
+    if (!iAmWatchHost()) return;
+    emitWatchControl('seek', {
+      mediaTime: readLocalWatchTime(),
+      paused: readLocalWatchPaused(),
+    });
+  });
+}
+if (watchVolume) {
+  watchVolume.addEventListener('pointerdown', (event) => event.stopPropagation());
+  watchVolume.addEventListener('input', () => {
+    watchVolumeValue = Number(watchVolume.value) / 100;
+    applyWatchVolume();
+  });
+}
+if (watchFsBtn) {
+  watchFsBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleFullscreen(paneWatch || stage);
+  });
+}
+document.addEventListener('fullscreenchange', syncWatchFullscreen);
+document.addEventListener('webkitfullscreenchange', syncWatchFullscreen);
+if (paneWatch) {
+  paneWatch.addEventListener('click', (event) => {
+    if (event.target.closest('.watch-controls')) return;
+    toggleFullscreen(paneWatch);
+  });
+}
+
 async function boot() {
   initLang();
   syncLangButtons();
+  guestPins = loadGuestPins();
+  setHomeKind(homeKind);
   setHomeMode('join');
   setHomeStep('room');
   prefillJoinForm();
@@ -4635,6 +5838,7 @@ async function boot() {
   applyUiLanguage();
   await loadAuthConfig();
   await loadAccount();
+  if (desktop) mediaUnlocked = true;
   try {
     const res = await fetch('/api/me', { credentials: 'same-origin' });
     if (res.ok) {
@@ -4645,6 +5849,7 @@ async function boot() {
         return;
       }
     } else if (res.status === 404) {
+      clearLastRoom();
       showView('login');
       loginError.textContent = t('room_not_found');
       loginError.hidden = false;
@@ -4653,8 +5858,9 @@ async function boot() {
       return;
     }
   } catch {
-    // Stay on home.
+    // Try the last room next.
   }
+  if (!invite && await resumeLastRoom()) return;
   showView('login');
   if (invite) passwordInput.focus();
 }

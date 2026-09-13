@@ -2,6 +2,7 @@
   "name": "screenshare",
   "version": "1.0.0",
   "private": true,
+  "license": "MPL-2.0",
   "description": "Private WebRTC screenshare rooms",
   "main": "server.js",
   "scripts": {

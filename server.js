@@ -40,6 +40,7 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const TURNSTILE_SITE_KEY = String(process.env.TURNSTILE_SITE_KEY || '').trim();
 const TURNSTILE_SECRET_KEY = String(process.env.TURNSTILE_SECRET_KEY || '').trim();
 const MAX_MEMBERS = 5;
+const MAX_WATCHPARTY_MEMBERS = 200;
 const ROOM_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 const ACCOUNT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_MS = 5 * 60 * 1000;
@@ -322,11 +323,27 @@ ensureColumn('rooms', 'icon_path', 'icon_path TEXT');
 ensureColumn('room_members', 'user_id', 'user_id INTEGER');
 ensureColumn('room_sessions', 'user_id', 'user_id INTEGER');
 ensureColumn('room_sessions', 'peer_id', "peer_id TEXT NOT NULL DEFAULT ''");
+ensureColumn('rooms', 'kind', "kind TEXT NOT NULL DEFAULT 'screenshare'");
 db.prepare('UPDATE rooms SET last_join_at = created_at WHERE last_join_at IS NULL').run();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS watch_parties (
+    name_key TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    video_id TEXT NOT NULL DEFAULT '',
+    host_peer_id TEXT NOT NULL DEFAULT '',
+    host_user_id INTEGER,
+    host_username_key TEXT NOT NULL DEFAULT '',
+    paused INTEGER NOT NULL DEFAULT 1,
+    media_time REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (name_key) REFERENCES rooms(name_key) ON DELETE CASCADE
+  );
+`);
 
 const stmtInsertRoom = db.prepare(`
-  INSERT INTO rooms (name_key, display_name, password_hash, permanent, created_at, tag, last_join_at, creator_username_key, owner_user_id, icon_path)
-  VALUES (@name_key, @display_name, @password_hash, @permanent, @created_at, @tag, @last_join_at, @creator_username_key, @owner_user_id, @icon_path)
+  INSERT INTO rooms (name_key, display_name, password_hash, permanent, created_at, tag, last_join_at, creator_username_key, owner_user_id, icon_path, kind)
+  VALUES (@name_key, @display_name, @password_hash, @permanent, @created_at, @tag, @last_join_at, @creator_username_key, @owner_user_id, @icon_path, @kind)
 `);
 const stmtUpsertPermanent = db.prepare(`
   INSERT INTO rooms (name_key, display_name, password_hash, permanent, created_at, tag, last_join_at, creator_username_key, owner_user_id)
@@ -441,6 +458,38 @@ const stmtListPins = db.prepare(`
   WHERE m.user_id = ? AND m.pinned = 1
   ORDER BY m.created_at ASC
 `);
+const stmtGetWatch = db.prepare('SELECT * FROM watch_parties WHERE name_key = ?');
+const stmtUpsertWatch = db.prepare(`
+  INSERT INTO watch_parties (
+    name_key, source_type, source_url, video_id, host_peer_id, host_user_id,
+    host_username_key, paused, media_time, updated_at
+  ) VALUES (
+    @name_key, @source_type, @source_url, @video_id, @host_peer_id, @host_user_id,
+    @host_username_key, @paused, @media_time, @updated_at
+  )
+  ON CONFLICT(name_key) DO UPDATE SET
+    source_type = excluded.source_type,
+    source_url = excluded.source_url,
+    video_id = excluded.video_id,
+    host_peer_id = excluded.host_peer_id,
+    host_user_id = excluded.host_user_id,
+    host_username_key = excluded.host_username_key,
+    paused = excluded.paused,
+    media_time = excluded.media_time,
+    updated_at = excluded.updated_at
+`);
+const stmtUpdateWatchPlayback = db.prepare(`
+  UPDATE watch_parties
+  SET paused = @paused, media_time = @media_time, updated_at = @updated_at
+  WHERE name_key = @name_key
+`);
+const stmtUpdateWatchHost = db.prepare(`
+  UPDATE watch_parties
+  SET host_peer_id = @host_peer_id, host_user_id = @host_user_id,
+      host_username_key = @host_username_key, updated_at = @updated_at
+  WHERE name_key = @name_key
+`);
+const stmtDeleteWatch = db.prepare('DELETE FROM watch_parties WHERE name_key = ?');
 
 const addChatTx = db.transaction((row) => {
   const info = stmtInsertChat.run(row);
@@ -483,6 +532,8 @@ seedPermanentRooms();
 
 const sockets = new Map();
 const chatSockets = new Map();
+const watchSockets = new Map();
+let watchIo = null;
 
 function touchRoom(nameKey) {
   if (!nameKey) return;
@@ -553,6 +604,7 @@ function deleteEphemeralRoom(nameKey) {
   stmtDeleteMembershipsInRoom.run(nameKey);
   stmtDeleteMembersInRoom.run(nameKey);
   stmtDeleteSessionsInRoom.run(nameKey);
+  stmtDeleteWatch.run(nameKey);
   stmtDeleteChatInRoom.run(nameKey);
   stmtDeleteRoom.run(nameKey);
 }
@@ -573,6 +625,7 @@ function deleteRoomFully(nameKey) {
   stmtDeleteMembershipsInRoom.run(nameKey);
   stmtDeleteMembersInRoom.run(nameKey);
   stmtDeleteSessionsInRoom.run(nameKey);
+  stmtDeleteWatch.run(nameKey);
   stmtDeleteChatInRoom.run(nameKey);
   stmtDeleteRoom.run(nameKey);
 }
@@ -658,8 +711,16 @@ function closeChatSocket(token) {
   sock.disconnect(true);
 }
 
+function closeWatchSocket(token) {
+  const sock = watchSockets.get(token);
+  if (!sock) return;
+  watchSockets.delete(token);
+  sock.disconnect(true);
+}
+
 function closeSocket(token) {
   closeChatSocket(token);
+  closeWatchSocket(token);
   const client = sockets.get(token);
   if (!client) return;
   client.replaced = true;
@@ -723,7 +784,7 @@ function restoreMember(token) {
   }
   const existing = stmtGetMember.get(token);
   if (existing) return { member: existing, room };
-  if (stmtMemberCount.get(room.name_key).n >= MAX_MEMBERS) return null;
+  if (stmtMemberCount.get(room.name_key).n >= roomMemberCap(room)) return null;
   if (stmtUsernameTaken.get(room.name_key, session.username_key)) return null;
   const peerId = session.peer_id || crypto.randomBytes(8).toString('hex');
   const member = {
@@ -777,6 +838,11 @@ function removeMember(token, announce, logout) {
     if (announce) {
       broadcastRoom(member.name_key, { type: 'peer-left', id: member.peer_id }, token);
     }
+    const room = stmtGetRoom.get(member.name_key);
+    if (room) {
+      const nextWatch = fallbackWatchHost(room, member.peer_id);
+      if (nextWatch) broadcastWatch(room.name_key, { action: 'host' });
+    }
   }
   if (logout) stmtDeleteSession.run(token);
 }
@@ -822,11 +888,183 @@ function claimPermanentOwner(room, userId) {
   return stmtGetRoom.get(room.name_key) || room;
 }
 
+function roomKindOf(room) {
+  return room && room.kind === 'watchparty' ? 'watchparty' : 'screenshare';
+}
+
+function roomMemberCap(room) {
+  return roomKindOf(room) === 'watchparty' ? MAX_WATCHPARTY_MEMBERS : MAX_MEMBERS;
+}
+
+function parseRoomKind(value) {
+  const kind = String(value || 'screenshare').trim().toLowerCase();
+  if (kind === 'watchparty' || kind === 'screenshare') return kind;
+  throw httpError(400, 'Invalid room type.', 'room_kind_bad');
+}
+
 function isCreator(room, member, user) {
   if (!room || !member) return false;
   if (user && room.owner_user_id && Number(room.owner_user_id) === Number(user.id)) return true;
   if (room.permanent) return false;
   return Boolean(room.creator_username_key && room.creator_username_key === member.username_key);
+}
+
+function isHlsUrl(url) {
+  const path = `${url.pathname || ''}${url.search || ''}`;
+  return /\.m3u8(\b|$)/i.test(path);
+}
+
+function watchAllowsSync(watch) {
+  if (!watch) return false;
+  return watch.sourceType === 'youtube' || watch.sourceType === 'media' || watch.sourceType === 'hls';
+}
+
+function watchPublic(nameKey) {
+  const row = stmtGetWatch.get(nameKey);
+  if (!row) return null;
+  return {
+    sourceType: row.source_type,
+    sourceUrl: row.source_url,
+    videoId: row.video_id || '',
+    hostPeerId: row.host_peer_id || '',
+    hostUserId: row.host_user_id == null ? null : Number(row.host_user_id),
+    hostUsernameKey: row.host_username_key || '',
+    paused: Boolean(row.paused),
+    mediaTime: Number(row.media_time) || 0,
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+function memberMatchesWatchHost(watch, member, user) {
+  if (!watch || !member) return false;
+  if (watch.hostPeerId && watch.hostPeerId === member.peer_id) return true;
+  if (watch.hostUserId && user && Number(watch.hostUserId) === Number(user.id)) return true;
+  if (watch.hostUsernameKey && watch.hostUsernameKey === member.username_key) return true;
+  return false;
+}
+
+function canManageWatch(room, member, user, watch) {
+  if (isCreator(room, member, user)) return true;
+  return memberMatchesWatchHost(watch, member, user);
+}
+
+function canControlWatch(room, member, user, watch) {
+  return canManageWatch(room, member, user, watch);
+}
+
+function parseWatchSource(raw) {
+  let url;
+  try {
+    url = new URL(String(raw || '').trim());
+  } catch {
+    throw httpError(400, 'Could not use that link.', 'watch_bad_url');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw httpError(400, 'Could not use that link.', 'watch_bad_url');
+  }
+  const host = url.hostname.replace(/^www\./, '').toLowerCase();
+  if (host === 'youtu.be') {
+    const id = url.pathname.split('/').filter(Boolean)[0] || '';
+    if (!id) throw httpError(400, 'Could not use that link.', 'watch_bad_url');
+    return { sourceType: 'youtube', sourceUrl: url.toString(), videoId: id };
+  }
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') {
+    let id = url.searchParams.get('v') || '';
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (!id && (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live')) {
+      id = parts[1] || '';
+    }
+    if (!id) throw httpError(400, 'Could not use that link.', 'watch_bad_url');
+    return { sourceType: 'youtube', sourceUrl: url.toString(), videoId: id };
+  }
+  if (host === 'clips.twitch.tv') {
+    throw httpError(400, 'Twitch clips are not compatible.', 'watch_clip');
+  }
+  if (host === 'twitch.tv' || host === 'm.twitch.tv' || host === 'player.twitch.tv') {
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (url.searchParams.get('clip') || parts[0] === 'clip' || parts[1] === 'clip') {
+      throw httpError(400, 'Twitch clips are not compatible.', 'watch_clip');
+    }
+    if (url.searchParams.get('video') || parts[0] === 'videos' || parts[0] === 'video') {
+      throw httpError(400, 'Twitch VODs are not compatible.', 'watch_vod');
+    }
+    const channel = url.searchParams.get('channel') || parts[0] || '';
+    if (!channel) throw httpError(400, 'Could not use that link.', 'watch_bad_url');
+    return {
+      sourceType: 'twitch',
+      sourceUrl: url.toString(),
+      videoId: channel,
+    };
+  }
+  if (isHlsUrl(url)) {
+    return { sourceType: 'hls', sourceUrl: url.toString(), videoId: '' };
+  }
+  return { sourceType: 'media', sourceUrl: url.toString(), videoId: '' };
+}
+
+function hostFieldsFromMember(member) {
+  return {
+    host_peer_id: member.peer_id,
+    host_user_id: member.user_id || null,
+    host_username_key: member.username_key || '',
+  };
+}
+
+function fallbackWatchHost(room, leavingPeerId) {
+  const watch = stmtGetWatch.get(room.name_key);
+  if (!watch || !leavingPeerId || watch.host_peer_id !== leavingPeerId) return;
+  const members = stmtMembersInRoom.all(room.name_key);
+  const owner = members.find((row) => {
+    const user = row.user_id ? stmtGetUser.get(row.user_id) : null;
+    return isCreator(room, row, user);
+  }) || members[0];
+  if (!owner) {
+    stmtDeleteWatch.run(room.name_key);
+    return null;
+  }
+  stmtUpdateWatchHost.run({
+    name_key: room.name_key,
+    ...hostFieldsFromMember(owner),
+    updated_at: Date.now(),
+  });
+  return watchPublic(room.name_key);
+}
+
+function broadcastWatch(nameKey, extra) {
+  if (!watchIo) return;
+  watchIo.to(nameKey).emit('watch:event', {
+    action: extra && extra.action,
+    state: watchPublic(nameKey),
+    serverAt: Date.now(),
+    sentAt: extra && extra.sentAt,
+  });
+}
+
+function persistWatchControl(room, member, user, action, body) {
+  const current = watchPublic(room.name_key);
+  if (!current) throw httpError(400, 'Start a watch party first.', 'watch_missing');
+  if (!watchAllowsSync(current)) return current;
+  if (!canControlWatch(room, member, user, current)) {
+    throw httpError(403, 'Only the host can do that.', 'watch_forbidden');
+  }
+  const now = Date.now();
+  const mediaTime = Math.max(0, Number(body && body.mediaTime));
+  const paused = action === 'pause'
+    ? 1
+    : action === 'play'
+      ? 0
+      : (body && body.paused == null ? (current.paused ? 1 : 0) : (body.paused ? 1 : 0));
+  stmtUpdateWatchPlayback.run({
+    name_key: room.name_key,
+    paused,
+    media_time: Number.isFinite(mediaTime) ? mediaTime : current.mediaTime,
+    updated_at: now,
+  });
+  broadcastWatch(room.name_key, {
+    action,
+    sentAt: Number(body && body.sentAt) || now,
+  });
+  return watchPublic(room.name_key);
 }
 
 function resolveJoinRoom(parsed) {
@@ -848,7 +1086,7 @@ function dropMemberRow(token) {
 const addMemberTx = db.transaction((room, username, previousToken, userId) => {
   const previous = previousToken ? dropMemberRow(previousToken) : null;
   const count = stmtMemberCount.get(room.name_key).n;
-  if (count >= MAX_MEMBERS) throw httpError(409, 'Room is full', 'room_full');
+  if (count >= roomMemberCap(room)) throw httpError(409, 'Room is full', 'room_full');
   if (stmtUsernameTaken.get(room.name_key, username.key)) {
     throw httpError(409, 'Username taken', 'username_taken');
   }
@@ -886,6 +1124,7 @@ const createRoomTx = db.transaction((roomName, password, opts = {}) => {
   const now = Date.now();
   const ownerUserId = opts.ownerUserId || null;
   const permanent = Boolean(opts.permanent);
+  const kind = parseRoomKind(opts.kind);
   if (permanent) {
     if (!ownerUserId) throw httpError(401, 'Unauthorized', 'auth_required');
     if (stmtGetRoom.get(roomName.nameKey)) {
@@ -902,6 +1141,7 @@ const createRoomTx = db.transaction((roomName, password, opts = {}) => {
       creator_username_key: '',
       owner_user_id: ownerUserId,
       icon_path: null,
+      kind,
     });
     return stmtGetRoom.get(roomName.nameKey);
   }
@@ -922,6 +1162,7 @@ const createRoomTx = db.transaction((roomName, password, opts = {}) => {
         creator_username_key: ownerUserId ? '' : '',
         owner_user_id: ownerUserId,
         icon_path: null,
+        kind,
       });
       room = stmtGetRoom.get(nameKey);
       break;
@@ -1055,6 +1296,7 @@ function roomPublicPayload(room) {
     label: tag ? `${name}#${tag}` : name,
     nameKey: room.name_key,
     permanent: Boolean(room.permanent),
+    kind: roomKindOf(room),
     iconUrl: iconUrlForRoom(room),
   };
 }
@@ -1067,6 +1309,8 @@ function memberPayload(room, username, member, user) {
     userId: user ? user.id : (member && member.user_id) || null,
     avatarUrl: avatarUrlForUser(user || (member && member.user_id ? stmtGetUser.get(member.user_id) : null)),
     canEditIcon: isCreator(room, member, user),
+    watch: watchPublic(room.name_key),
+    canManageWatch: canManageWatch(room, member, user, watchPublic(room.name_key)),
   };
 }
 
@@ -1229,6 +1473,7 @@ app.post('/api/rooms', (req, res) => {
     const room = createRoomTx(roomName, password, {
       ownerUserId: user ? user.id : null,
       permanent,
+      kind: parseRoomKind(body.kind),
     });
     res.json(roomPublicPayload(room));
   } catch (err) {
@@ -1434,6 +1679,8 @@ app.get('/api/stream', requireMember, (req, res) => {
     name: client.username,
     ...memberPeerPayload(member),
     peers: others,
+    kind: roomKindOf(room),
+    watch: watchPublic(room.name_key),
   });
   if (!replaced) {
     broadcastRoom(room.name_key, { type: 'peer-joined', ...memberPeerPayload(member) }, client.token);
@@ -1453,6 +1700,101 @@ app.get('/api/stream', requireMember, (req, res) => {
     scheduleMemberGrace(client.token);
   });
 });
+
+app.post('/api/watch', requireMember, (req, res) => {
+  const body = req.body || {};
+  const action = String(body.action || '').trim().toLowerCase();
+  const room = req.room;
+  const member = req.member;
+  const user = req.user || (member.user_id ? stmtGetUser.get(member.user_id) : null);
+  const current = watchPublic(room.name_key);
+  const now = Date.now();
+
+  try {
+    if (action === 'set') {
+      if (!canManageWatch(room, member, user, current)) {
+        return res.status(403).json({ error: 'Only the host can do that.', code: 'watch_forbidden' });
+      }
+      const source = parseWatchSource(body.url);
+      const keepHost = current && (
+        stmtGetMemberByPeer.get(room.name_key, current.hostPeerId)
+        || membersMatchHost(current, room.name_key)
+      );
+      const host = keepHost && current.hostPeerId
+        ? {
+          host_peer_id: current.hostPeerId,
+          host_user_id: current.hostUserId,
+          host_username_key: current.hostUsernameKey,
+        }
+        : hostFieldsFromMember(member);
+      stmtUpsertWatch.run({
+        name_key: room.name_key,
+        source_type: source.sourceType,
+        source_url: source.sourceUrl,
+        video_id: source.videoId,
+        ...host,
+        paused: watchAllowsSync(source) ? 1 : 0,
+        media_time: 0,
+        updated_at: now,
+      });
+      broadcastWatch(room.name_key, { action: 'set' });
+      return res.json({ ok: true, watch: watchPublic(room.name_key) });
+    }
+
+    if (action === 'stop') {
+      if (!canManageWatch(room, member, user, current)) {
+        return res.status(403).json({ error: 'Only the host can do that.', code: 'watch_forbidden' });
+      }
+      stmtDeleteWatch.run(room.name_key);
+      broadcastWatch(room.name_key, { action: 'stop' });
+      return res.json({ ok: true, watch: null });
+    }
+
+    if (action === 'host') {
+      if (!isCreator(room, member, user)) {
+        return res.status(403).json({ error: 'Only the room creator can do that.', code: 'watch_forbidden' });
+      }
+      if (!current) {
+        return res.status(400).json({ error: 'Start a watch party first.', code: 'watch_missing' });
+      }
+      const peerId = String(body.peerId || '');
+      const target = stmtGetMemberByPeer.get(room.name_key, peerId);
+      if (!target) {
+        return res.status(404).json({ error: 'Peer gone', code: 'peer_gone' });
+      }
+      stmtUpdateWatchHost.run({
+        name_key: room.name_key,
+        ...hostFieldsFromMember(target),
+        updated_at: now,
+      });
+      broadcastWatch(room.name_key, { action: 'host' });
+      return res.json({ ok: true, watch: watchPublic(room.name_key) });
+    }
+
+    if (action === 'tick') {
+      return res.json({ ok: true, watch: current });
+    }
+
+    if (action === 'play' || action === 'pause' || action === 'seek') {
+      return res.json({ ok: true, watch: persistWatchControl(room, member, user, action, body) });
+    }
+
+    return res.status(400).json({ error: 'Bad watch action.', code: 'watch_bad_action' });
+  } catch (err) {
+    sendError(res, err, 'Could not update watch party.', 'watch_fail');
+  }
+});
+
+function membersMatchHost(watch, nameKey) {
+  if (!watch) return false;
+  const members = stmtMembersInRoom.all(nameKey);
+  return members.some((row) => {
+    if (watch.hostPeerId && row.peer_id === watch.hostPeerId) return true;
+    if (watch.hostUserId && Number(row.user_id) === Number(watch.hostUserId)) return true;
+    if (watch.hostUsernameKey && row.username_key === watch.hostUsernameKey) return true;
+    return false;
+  });
+}
 
 app.post('/api/signal', requireMember, (req, res) => {
   const from = findSocketByToken(req.sessionToken);
@@ -1621,6 +1963,51 @@ io.on('connection', (socket) => {
     if (!row) return;
     stmtDeleteChat.run(id, member.name_key);
     io.to(member.name_key).emit('chat:deleted', { id });
+  });
+});
+
+watchIo = new Server(httpServer, {
+  path: '/watch.io',
+  serveClient: false,
+});
+
+watchIo.use((socket, next) => {
+  parseCookies(socket.request, {}, (err) => {
+    if (err) return next(new Error('Unauthorized'));
+    const session = memberFromHandshake(socket.request);
+    if (!session) return next(new Error('Unauthorized'));
+    socket.data.token = session.token;
+    socket.data.nameKey = session.member.name_key;
+    next();
+  });
+});
+
+watchIo.on('connection', (socket) => {
+  const prev = watchSockets.get(socket.data.token);
+  if (prev && prev !== socket) prev.disconnect(true);
+  watchSockets.set(socket.data.token, socket);
+  socket.join(socket.data.nameKey);
+  socket.emit('watch:event', {
+    action: 'set',
+    state: watchPublic(socket.data.nameKey),
+    serverAt: Date.now(),
+  });
+
+  socket.on('disconnect', () => {
+    if (watchSockets.get(socket.data.token) === socket) watchSockets.delete(socket.data.token);
+  });
+
+  socket.on('watch:control', (payload) => {
+    const action = payload && payload.action;
+    if (action !== 'play' && action !== 'pause' && action !== 'seek') return;
+    const member = stmtGetMember.get(socket.data.token);
+    const room = member ? stmtGetRoom.get(member.name_key) : null;
+    if (!member || !room || member.name_key !== socket.data.nameKey) return;
+    try {
+      persistWatchControl(room, member, readAccountUser(socket.request), action, payload || {});
+    } catch {
+      // Drop unauthorized or stale controls.
+    }
   });
 });
 
