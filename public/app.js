@@ -2217,14 +2217,13 @@ async function sendSignal(to, data) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'signal', to, data }),
       });
-      if (res.ok) return;
-      if (res.status !== 404 && res.status !== 409) break;
+      if (res.ok || res.status === 404) return;
+      if (res.status !== 409) break;
     } catch {
       // retry
     }
     await sleep(250 * (attempt + 1));
   }
-  showRoomError(t('signal_send_fail'));
 }
 
 function currentQuality() {
@@ -5562,6 +5561,7 @@ async function enterRoom(info) {
   state.roomId = currentRoomId;
   state.inviteCode = currentInviteCode;
   state.visibility = (info && info.visibility) || 'public';
+  requestsMod.renderInbox();
   if (info && info.channels) channelsMod.setChannels(info.channels);
   if (info && info.voiceChannelId) state.voiceChannelId = String(info.voiceChannelId);
   roomKind = info && info.kind === 'watchparty' ? 'watchparty' : 'screenshare';
@@ -5647,6 +5647,10 @@ async function returnHome(options = {}) {
   iAmCreator = false;
   canEditIcon = false;
   currentNameKey = '';
+  currentRoomId = '';
+  state.roomId = '';
+  state.inviteCode = '';
+  requestsMod.renderInbox();
   roomKind = 'screenshare';
   canManageWatch = false;
   applyWatchState(null);
@@ -6394,6 +6398,10 @@ hooks.refreshRemoteMedia = () => refreshRemoteMedia();
 hooks.upsertRoomMember = (item) => upsertRoomMember(item);
 hooks.removePeer = (id) => removePeer(id);
 hooks.setAccountMenu = (open) => setAccountMenu(open);
+hooks.onJoinRequest = (request) => {
+  if (!request || String(request.roomId || '') !== String(currentRoomId || state.roomId)) return;
+  setMembersOpen(true);
+};
 hooks.onJoinApproved = async (request) => {
   try {
     const info = await homeMod.joinRoom({ inviteCode: request.inviteCode });

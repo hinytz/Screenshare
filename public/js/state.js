@@ -35,5 +35,6 @@ export const hooks = {
   loadAccount: async () => {},
   renderPins() {},
   setAccountMenu() {},
+  onJoinRequest() {},
   onChannelActivated() {},
 };

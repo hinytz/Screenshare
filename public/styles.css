@@ -2870,12 +2870,23 @@ html.is-desktop .unmute {
 }
 
 .join-inbox {
-  padding: 0.5rem 0.7rem 0.7rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0 0 0.55rem;
+  padding: 0.55rem 0.6rem 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.join-inbox[hidden] {
+  display: none;
 }
 
 .join-inbox-title {
-  margin: 0 0 0.4rem;
+  margin: 0;
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 700;
@@ -2889,24 +2900,48 @@ html.is-desktop .unmute {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.5rem;
 }
 
 .join-inbox-item {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.35rem;
 }
 
 .join-inbox-who {
   display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
   font-size: 0.78rem;
 }
 
-.join-inbox-who span {
+.join-inbox-avatar {
+  flex: none;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #111214;
   color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.join-inbox-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.join-inbox-who strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .join-inbox-actions {

@@ -59,10 +59,6 @@
           <div class="account-menu-warn">
             <p data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
           </div>
-          <div id="join-inbox" class="join-inbox" hidden>
-            <p class="join-inbox-title" data-i18n="join_requests">Join requests</p>
-            <ul id="join-inbox-list" class="join-inbox-list"></ul>
-          </div>
           <button type="button" id="account-upload-btn">
             <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18.75 15.5L18.75 21.5"/>
@@ -478,6 +474,10 @@
                 <p class="people-heading" data-i18n="members">Members</p>
                 <span id="peer-count">1</span>
               </header>
+              <div id="join-inbox" class="join-inbox" hidden>
+                <p class="join-inbox-title" data-i18n="join_requests">Join requests</p>
+                <ul id="join-inbox-list" class="join-inbox-list"></ul>
+              </div>
               <ul id="people-list"></ul>
             </div>
             <div id="voice-chat-panel" class="voice-chat-panel" hidden></div>

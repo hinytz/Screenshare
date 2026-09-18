@@ -431,7 +431,13 @@ function socketsForUser(userId) {
 }
 
 function sendToToken(token, payload) {
-  for (const client of sseList(token)) send(client, payload);
+  let n = 0;
+  for (const client of sseList(token)) {
+    if (!client || client.res.writableEnded) continue;
+    send(client, payload);
+    n += 1;
+  }
+  return n;
 }
 
 function notifyUser(userId, payload) {
@@ -1739,16 +1745,18 @@ app.post('/api/signal', requireMember, (req, res) => {
   if (body.type !== 'signal' || !body.data || !body.to) {
     return res.status(400).json({ error: 'Bad signal' });
   }
-  const fromVoice = memberVoiceChannel(from.token);
-  const target = findSocketById(body.to, from.roomId);
-  if (!target) {
+  const targetMember = stmtGetMemberByPeer.get(from.roomId, String(body.to));
+  if (!targetMember) {
     return res.status(404).json({ error: 'Peer gone' });
   }
-  const targetVoice = memberVoiceChannel(target.token);
+  const fromVoice = memberVoiceChannel(from.token);
+  const targetVoice = memberVoiceChannel(targetMember.session_token);
   if (!fromVoice || !targetVoice || String(fromVoice) !== String(targetVoice)) {
     return res.status(403).json({ error: 'Not in the same voice channel.', code: 'voice_peer' });
   }
-  send(target, { type: 'signal', from: from.id, data: body.data });
+  if (!sendToToken(targetMember.session_token, { type: 'signal', from: from.id, data: body.data })) {
+    return res.status(409).json({ error: 'Not in room' });
+  }
   res.json({ ok: true });
 });
 
@@ -1867,7 +1875,7 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   path: '/socket.io',
   serveClient: true,
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   cors: { origin: true, credentials: true },
 });
 
@@ -1954,7 +1962,7 @@ io.on('connection', (socket) => {
 watchIo = new Server(httpServer, {
   path: '/watch.io',
   serveClient: false,
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   cors: { origin: true, credentials: true },
 });
 
