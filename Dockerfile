@@ -7,7 +7,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY server.js ./
+COPY server.js ids.js ./
+COPY lib ./lib
 COPY public ./public
 
 RUN mkdir -p /app/data

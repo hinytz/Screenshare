@@ -1,10 +1,18 @@
 import { t, applyI18n, setLang, getLang, initLang } from './i18n.js';
+import { state, hooks } from './js/state.js';
+import * as api from './js/api.js';
+import * as homeMod from './js/home.js';
+import * as accountMod from './js/account.js';
+import * as pinsMod from './js/pins.js';
+import * as channelsMod from './js/channels.js';
+import * as chatMod from './js/chat.js';
+import * as webrtcMod from './js/webrtc.js';
+import * as requestsMod from './js/requests.js';
 
 const loginView = document.getElementById('login');
 const roomView = document.getElementById('room');
 const loginForm = document.getElementById('login-form');
 const roomNameInput = document.getElementById('room-name');
-const passwordInput = document.getElementById('password');
 const usernameInput = document.getElementById('username');
 const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
@@ -27,7 +35,6 @@ const modeRegister = document.getElementById('mode-register');
 const accountForm = document.getElementById('account-form');
 const accountPassword = document.getElementById('account-password');
 const accountUsername = document.getElementById('account-username');
-const accountUsernameHint = document.getElementById('account-username-hint');
 const accountSubmit = document.getElementById('account-submit');
 const accountTtlWarn = document.getElementById('account-ttl-warn');
 const turnstileWrap = document.getElementById('turnstile-wrap');
@@ -39,13 +46,13 @@ const pinTipName = document.getElementById('pin-tip-name');
 const pinTipUnpin = document.getElementById('pin-tip-unpin');
 const pinTipPin = document.getElementById('pin-tip-pin');
 const pinAddBtn = document.getElementById('pin-add-btn');
+const pinUser = document.getElementById('pin-user');
 const roomModal = document.getElementById('room-modal');
 const roomModalForm = document.getElementById('room-modal-form');
 const roomModalClose = document.getElementById('room-modal-close');
 const modalModeJoin = document.getElementById('modal-mode-join');
 const modalModeCreate = document.getElementById('modal-mode-create');
 const modalRoomName = document.getElementById('modal-room-name');
-const modalRoomPassword = document.getElementById('modal-room-password');
 const modalCreateTtl = document.getElementById('modal-create-ttl');
 const modalPermanentField = document.getElementById('modal-permanent-field');
 const modalModeTemporary = document.getElementById('modal-mode-temporary');
@@ -83,6 +90,25 @@ const accountAvatarBtn = document.getElementById('account-avatar-btn');
 const accountAvatarImg = document.getElementById('account-avatar-img');
 const accountAvatarLetter = document.getElementById('account-avatar-letter');
 const accountMenu = document.getElementById('account-menu');
+const userSettingsBtn = document.getElementById('user-settings-btn');
+const userBar = document.getElementById('user-bar');
+const userBarName = document.getElementById('user-bar-name');
+const userBarAvatarSlot = document.getElementById('user-bar-avatar-slot');
+const userBarMenuSlot = document.getElementById('user-bar-menu-slot');
+const channelVoiceBtn = document.getElementById('channel-voice');
+const channelChatBtn = document.getElementById('channel-chat');
+const voiceRoster = document.getElementById('voice-roster');
+const voiceIdleGrid = document.getElementById('voice-idle-grid');
+const mainChannelTitle = document.getElementById('main-channel-title');
+const membersToggle = document.getElementById('members-toggle');
+const channelsToggle = document.getElementById('channels-toggle');
+const roomScrim = document.getElementById('room-scrim');
+const mainPaneChat = document.getElementById('main-pane-chat');
+const mainPaneVoice = document.getElementById('main-pane-voice');
+const chatPane = document.getElementById('chat-pane');
+const sidePanel = document.getElementById('side-panel');
+const voiceChatPanel = document.getElementById('voice-chat-panel');
+const voiceActionBar = document.querySelector('.voice-action-bar');
 const accountUploadBtn = document.getElementById('account-upload-btn');
 const accountLogoutBtn = document.getElementById('account-logout-btn');
 const accountDeleteBtn = document.getElementById('account-delete-btn');
@@ -107,8 +133,6 @@ const paneYou = document.getElementById('pane-you');
 const youName = document.getElementById('you-name');
 const shareBtn = document.getElementById('share-btn');
 const chatBtn = document.getElementById('chat-btn');
-const chatOverlay = document.getElementById('chat-overlay');
-const chatClose = document.getElementById('chat-close');
 const chatLog = document.getElementById('chat-log');
 const chatForm = document.getElementById('chat-form');
 const chatInput = document.getElementById('chat-input');
@@ -116,7 +140,6 @@ const changeBtn = document.getElementById('change-btn');
 const cameraBtn = document.getElementById('camera-btn');
 const floatBtn = document.getElementById('float-btn');
 const leaveBtn = document.getElementById('leave-btn');
-const peerStatus = document.getElementById('peer-status');
 const peerCount = document.getElementById('peer-count');
 const peoplePanel = document.getElementById('people-panel');
 const peopleList = document.getElementById('people-list');
@@ -164,12 +187,13 @@ const DEFAULT_ICE = [
 const ROOM_CACHE_KEY = 'screenshare.rooms';
 const GUEST_PINS_KEY = 'screenshare.guestPins';
 const MIC_CACHE_KEY = 'screenshare.mic';
-const MAX_PEOPLE = 5;
+const MAX_VOICE = 5;
 const MIC_BITRATE = 64_000;
 const VAD_HANG_MS = 160;
 const PERSON_MIC_SVG = '<svg class="hi icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.1572 4.1572C8.94761 2.86349 10.373 2 12 2C14.4853 2 16.5 4.01472 16.5 6.5V11.5C16.5 11.8111 16.4684 12.1149 16.4083 12.4083M7.5 7.5V11.5C7.5 13.9853 9.51472 16 12 16C13.1154 16 14.136 15.5942 14.9222 14.9222"/><path d="M2 2L22 22"/><path d="M12 19H11.5828C8.07267 19 5.07706 16.4623 4.5 13M12 19H12.4172C14.2325 19 15.9102 18.3213 17.1869 17.1869M12 19V22M19.5 13C19.3878 13.6733 19.1841 14.3116 18.903 14.903"/></svg><svg class="hi icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6.5C7 4.01472 9.01472 2 11.5 2C13.9853 2 16 4.01472 16 6.5V11.5C16 13.9853 13.9853 16 11.5 16C9.01472 16 7 13.9853 7 11.5V6.5Z"/><path d="M11.5 19H11.0828C7.57267 19 4.57706 16.4623 4 13M11.5 19H11.9172C15.4273 19 18.4229 16.4623 19 13M11.5 19V22"/></svg>';
 const DELETE_SVG = '<svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 5.5L18.8803 15.5251C18.7219 18.0864 18.6428 19.3671 18.0008 20.2879C17.6833 20.7431 17.2747 21.1273 16.8007 21.416C15.8421 22 14.559 22 11.9927 22C9.42312 22 8.1383 22 7.17905 21.4149C6.7048 21.1257 6.296 20.7408 5.97868 20.2848C5.33688 19.3626 5.25945 18.0801 5.10461 15.5152L4.5 5.5"/><path d="M3 5.5H21M16.0557 5.5L15.3731 4.09173C14.9196 3.15626 14.6928 2.68852 14.3017 2.39681C14.215 2.3321 14.1231 2.27454 14.027 2.2247C13.5939 2 13.0741 2 12.0345 2C10.9688 2 10.436 2 9.99568 2.23412C9.8981 2.28601 9.80498 2.3459 9.71729 2.41317C9.32164 2.7167 9.10063 3.20155 8.65861 4.17126L8.05292 5.5"/><path d="M9.5 16.5L9.5 10.5"/><path d="M14.5 16.5L14.5 10.5"/></svg>';
 const PANE_PIP_SVG = '<svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99219 19.965C5.11989 19.8873 3.97194 19.6366 3.16376 18.8284C1.99219 17.6569 1.99219 15.7712 1.99219 12C1.99219 8.22876 1.99219 6.34315 3.16376 5.17157C4.33534 4 6.22095 4 9.99219 4H13.9922C17.7634 4 19.6491 4 20.8206 5.17157C21.4738 5.82475 21.7628 6.69989 21.8907 8"/><path d="M19.9297 12H13.0547C11.9156 12 10.9922 12.8954 10.9922 14V18C10.9922 19.1046 11.9156 20 13.0547 20H19.9297C21.0688 20 21.9922 19.1046 21.9922 18V14C21.9922 12.8954 21.0688 12 19.9297 12Z"/></svg>';
+const PANE_RELOAD_SVG = '<svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 7.99976H18C19.4142 7.99976 20.1213 7.99976 20.5607 7.56042C21 7.12108 21 6.41397 21 4.99976V3.49976"/><path d="M3 11.9998C3 7.02919 7.0293 2.99976 12 2.99976C15.571 2.99976 18.0948 4.73029 20 7.08347M21 11.9998C21 16.9703 16.9707 20.9998 12 20.9998C8.42904 20.9998 5.90524 19.2692 4 16.916"/><path d="M7.5 15.9998H6C4.58579 15.9998 3.87868 15.9998 3.43934 16.4391C3 16.8784 3 17.5855 3 18.9998V20.4998"/></svg>';
 
 let iceServers = DEFAULT_ICE;
 let events = null;
@@ -185,10 +209,11 @@ let homeStep = 'room';
 let homeKind = 'screenshare';
 let modalStep = 'room';
 let modalKind = 'screenshare';
-let pendingHome = { name: '', password: '', kind: 'screenshare' };
-let pendingModal = { name: '', password: '', kind: 'screenshare' };
+let pendingHome = { name: '', inviteCode: '', visibility: 'public', kind: 'screenshare' };
+let pendingModal = { name: '', inviteCode: '', visibility: 'public', kind: 'screenshare' };
 let currentRoomLabel = '';
-let currentRoomPassword = '';
+let currentInviteCode = '';
+let currentRoomId = '';
 let roomKind = 'screenshare';
 let watchState = null;
 let watchPlayer = null;
@@ -219,6 +244,18 @@ let chatSocket = null;
 let watchSocket = null;
 let chatOpen = false;
 let chatStickBottom = true;
+let activeChannel = 'chat';
+let inVoiceChannel = false;
+let leavingVoice = false;
+let voiceLeaveAt = 0;
+let membersOpen = true;
+const MOBILE_ROOM_MQ = '(max-width: 52rem)';
+let mobilePane = 'main';
+let voiceJoinPromise = null;
+let voicePeerId = null;
+let micSettings = { deviceId: '', gain: 1, threshold: 0.04 };
+const roomMembers = new Map();
+const voicePeerIds = new Set();
 let featured = 'you';
 let featuredView = { kind: 'pane' };
 let localStream = null;
@@ -246,8 +283,6 @@ let micStarting = false;
 let micStartPromise = null;
 let micDenied = false;
 let voiceCtx = null;
-let voicePeerId = null;
-let micSettings = { deviceId: '', gain: 1, threshold: 0.04 };
 const peers = new Map();
 const CAMERA_CONSTRAINTS = {
   video: {
@@ -269,9 +304,25 @@ let desktopAudio = {
 function showView(view) {
   loginView.hidden = view !== 'login';
   roomView.hidden = view !== 'room';
+  if (view !== 'room') mobilePane = 'main';
+  if (roomView) roomView.dataset.mobilePane = mobilePane;
+  placeAccountChrome(view === 'room');
+  syncMobileChrome();
+}
+
+function placeAccountChrome(inRoom) {
+  if (!accountAvatarBtn || !accountMenu) return;
+  if (inRoom && userBarAvatarSlot && userBarMenuSlot) {
+    userBarAvatarSlot.append(accountAvatarBtn);
+    userBarMenuSlot.append(accountMenu);
+  } else if (pinUser) {
+    pinUser.append(accountAvatarBtn, accountMenu);
+  }
 }
 
 function peerLabel(id) {
+  const member = roomMembers.get(id);
+  if (member && member.name) return member.name;
   const peer = peers.get(id);
   if (peer && peer.name) return peer.name;
   return `Peer ${String(id).slice(0, 4)}`;
@@ -279,7 +330,8 @@ function peerLabel(id) {
 
 function setYouName(name) {
   myName = name || '';
-  youName.textContent = myName || t('you');
+  if (youName) youName.textContent = myName || t('you');
+  if (userBarName) userBarName.textContent = (accountUser && accountUser.username) || myName || t('you');
 }
 
 function syncLangButtons() {
@@ -303,8 +355,7 @@ function setHomeStep(step) {
   if (homeRoomHeading) {
     homeRoomHeading.textContent = homeStep === 'user' ? (pendingHome.name || roomNameInput.value.trim()) : '';
   }
-  roomNameInput.required = homeStep === 'room' && homeAuth === 'guest';
-  passwordInput.required = homeStep === 'room' && homeAuth === 'guest';
+  roomNameInput.required = homeStep === 'room';
   usernameInput.required = homeStep === 'user' && !accountUser;
   loginBtn.textContent = homeStep === 'user' ? t('enter') : t('continue');
   if (!loginView.hidden) {
@@ -313,32 +364,362 @@ function setHomeStep(step) {
   }
 }
 
-function setHomePermanent(on) {
-  homePermanent = Boolean(on);
-  if (modeTemporary) modeTemporary.setAttribute('aria-selected', homePermanent ? 'false' : 'true');
-  if (modePermanent) modePermanent.setAttribute('aria-selected', homePermanent ? 'true' : 'false');
-  setHomeMode(homeMode);
+function setHomePermanent(_on) {
+  homePermanent = false;
 }
 
 function setHomeMode(mode) {
   homeMode = mode === 'create' ? 'create' : 'join';
   modeJoin.setAttribute('aria-selected', homeMode === 'join' ? 'true' : 'false');
   modeCreate.setAttribute('aria-selected', homeMode === 'create' ? 'true' : 'false');
-  if (createTtlWarn) {
-    const perm = Boolean(accountUser && homePermanent);
-    createTtlWarn.hidden = homeMode !== 'create' || homeStep !== 'room' || perm;
-  }
-  if (permanentField) {
-    permanentField.hidden = homeMode !== 'create' || homeStep !== 'room' || !accountUser;
-  }
+  if (createTtlWarn) createTtlWarn.hidden = true;
+  if (permanentField) permanentField.hidden = true;
   if (homeStep === 'room' || homeStep === 'kind') loginBtn.textContent = t('continue');
-  roomNameInput.placeholder = homeMode === 'join' ? t('room_placeholder') : '';
+  homeMod.syncVisibilityFields(homeMode, modalRoomMode);
   if (homeRoomBack) homeRoomBack.hidden = homeMode !== 'create' || homeStep !== 'room';
 }
 
 function letterFor(name) {
   const raw = String(name || '').replace(/^@/, '').trim();
   return (raw[0] || '?').toUpperCase();
+}
+
+function upsertRoomMember(item) {
+  if (!item || !item.id) return null;
+  const prev = roomMembers.get(item.id) || {};
+  const next = {
+    id: item.id,
+    name: item.name || prev.name || '',
+    userId: item.userId || prev.userId || null,
+    avatarUrl: item.avatarUrl || prev.avatarUrl || '',
+    inVoice: Boolean(item.inVoice),
+    voiceChannelId: item.voiceChannelId || prev.voiceChannelId || null,
+  };
+  roomMembers.set(next.id, next);
+  if (next.inVoice) voicePeerIds.add(next.id);
+  else voicePeerIds.delete(next.id);
+  return next;
+}
+
+function selfIsLive() {
+  if (localStream) return true;
+  if (cameraTrack()) return true;
+  if (watchActive() && iAmWatchHost()) return true;
+  return false;
+}
+
+function peerIsLive(peer, member) {
+  if (watchActive() && watchState && member && watchState.hostPeerId === member.id) return true;
+  if (!peer) return false;
+  if (peer.screenOn) return true;
+  if (peer.pane && isLive(peer.pane)) return true;
+  if (peer.cameraTracks && peer.cameraTracks.size) return true;
+  if (watchActive() && watchState && watchState.hostPeerId === peer.id) return true;
+  return false;
+}
+
+function hasLiveStreams() {
+  if (watchActive()) return true;
+  if (paneYou && !paneYou.hidden && isLive(paneYou)) return true;
+  if (cameraTrack()) return true;
+  for (const peer of peers.values()) {
+    if (peer.pane && isLive(peer.pane)) return true;
+    if (peer.cameraTracks && peer.cameraTracks.size) return true;
+  }
+  return false;
+}
+
+function placeChatPane() {
+  if (!chatPane) return;
+  if (activeChannel === 'voice' && chatOpen && voiceChatPanel) {
+    voiceChatPanel.append(chatPane);
+  } else if (mainPaneChat) {
+    mainPaneChat.append(chatPane);
+  }
+}
+
+function applySidePanel() {
+  if (!roomView) return;
+  const voice = Boolean(state.activeChannel && state.activeChannel.type === 'voice');
+  activeChannel = voice ? 'voice' : 'chat';
+  const live = hasLiveStreams();
+  roomView.dataset.channel = activeChannel;
+  roomView.dataset.voice = inVoiceChannel ? 'joined' : 'idle';
+  roomView.dataset.streams = live ? 'live' : 'idle';
+  if (voice && chatOpen) roomView.dataset.sideChat = 'open';
+  else delete roomView.dataset.sideChat;
+
+  if (mainPaneChat) mainPaneChat.hidden = voice;
+  if (mainPaneVoice) mainPaneVoice.hidden = !voice;
+  if (voiceActionBar) voiceActionBar.hidden = !voice;
+
+  if (sidePanel) {
+    if (voice) {
+      if (mobilePane === 'members') {
+        mobilePane = 'main';
+        if (roomView) roomView.dataset.mobilePane = 'main';
+      }
+      sidePanel.hidden = !chatOpen;
+      sidePanel.dataset.mode = chatOpen ? 'chat' : '';
+      sidePanel.dataset.collapsed = chatOpen ? 'false' : 'true';
+    } else if (isMobileRoom()) {
+      sidePanel.hidden = false;
+      sidePanel.dataset.mode = 'members';
+      sidePanel.dataset.collapsed = mobilePane === 'members' ? 'false' : 'true';
+    } else {
+      sidePanel.hidden = !membersOpen;
+      sidePanel.dataset.mode = 'members';
+      sidePanel.dataset.collapsed = membersOpen ? 'false' : 'true';
+    }
+  }
+  if (peoplePanel) peoplePanel.hidden = voice;
+  if (voiceChatPanel) voiceChatPanel.hidden = !(voice && chatOpen);
+  if (membersToggle) membersToggle.hidden = voice;
+  syncMobileChrome();
+  placeChatPane();
+  renderVoiceRoster();
+  renderVoiceIdleCards();
+}
+
+function setActiveChannel(channel) {
+  if (channel && typeof channel === 'object') {
+    state.activeChannel = channel;
+    activeChannel = channel.type === 'voice' ? 'voice' : 'chat';
+  } else {
+    activeChannel = channel === 'voice' ? 'voice' : 'chat';
+    if (activeChannel === 'text' || activeChannel === 'chat') {
+      const text = channelsMod.firstTextChannel();
+      if (text) state.activeChannel = { type: 'text', id: text.id };
+    }
+  }
+  channelsMod.renderChannels();
+  if (activeChannel === 'chat') chatOpen = false;
+  applySidePanel();
+  applyLayout();
+  if (activeChannel === 'chat') {
+    chatStickBottom = true;
+    scrollChatIfNeeded();
+  }
+}
+
+function isMobileRoom() {
+  return window.matchMedia(MOBILE_ROOM_MQ).matches;
+}
+
+function syncMobileChrome() {
+  const narrow = isMobileRoom();
+  const inRoom = Boolean(roomView && !roomView.hidden);
+  const channelsOpen = mobilePane === 'channels';
+  const membersShown = narrow ? mobilePane === 'members' : membersOpen;
+  const voiceChat = narrow && activeChannel === 'voice' && chatOpen;
+  if (channelsToggle) channelsToggle.setAttribute('aria-expanded', channelsOpen ? 'true' : 'false');
+  if (membersToggle) {
+    membersToggle.setAttribute('aria-expanded', membersShown ? 'true' : 'false');
+    membersToggle.setAttribute('aria-pressed', membersShown ? 'true' : 'false');
+  }
+  if (roomScrim) roomScrim.hidden = !narrow || !inRoom || (mobilePane === 'main' && !voiceChat);
+  const channelColumn = document.getElementById('channel-column');
+  if (channelColumn) channelColumn.inert = Boolean(narrow && inRoom && !channelsOpen);
+  if (pinRail) pinRail.inert = Boolean(narrow && inRoom && !channelsOpen);
+  if (sidePanel) sidePanel.inert = Boolean(narrow && inRoom && !membersShown && !voiceChat);
+}
+
+function setMobilePane(pane) {
+  const next = pane === 'channels' || pane === 'members' ? pane : 'main';
+  mobilePane = next;
+  if (roomView) roomView.dataset.mobilePane = next;
+  if (isMobileRoom()) membersOpen = next === 'members';
+  applySidePanel();
+}
+
+function setMembersOpen(open) {
+  if (isMobileRoom()) {
+    setMobilePane(open ? 'members' : 'main');
+    return;
+  }
+  membersOpen = Boolean(open);
+  applySidePanel();
+}
+
+function connectVoicePeer(member) {
+  if (!inVoiceChannel || !member || !member.id || member.id === myId) return;
+  if (!webrtcMod.shouldConnectPeer(member) && !member.inVoice) return;
+  if (state.voiceChannelId && member.voiceChannelId && String(member.voiceChannelId) !== String(state.voiceChannelId)) return;
+  if (peers.has(member.id)) {
+    setPeerName(member.id, member.name, member);
+    return;
+  }
+  ensurePeer(member.id, member.name, member);
+  sendSignal(member.id, { type: 'restart' });
+}
+
+async function joinVoiceChannel(channelId) {
+  const targetId = channelId
+    || state.voiceChannelId
+    || (state.activeChannel.type === 'voice' && state.activeChannel.id)
+    || (state.channels.find((ch) => ch.type === 'voice') || {}).id;
+  if (!targetId) return;
+  if (inVoiceChannel && String(state.voiceChannelId) === String(targetId)) return;
+  if (voiceJoinPromise) return voiceJoinPromise;
+  voiceJoinPromise = (async () => {
+    try {
+      const ok = await channelsMod.joinVoice(targetId);
+      if (!ok) return;
+    } catch {
+      showRoomError(t('could_not_reach'));
+    } finally {
+      voiceJoinPromise = null;
+    }
+  })();
+  return voiceJoinPromise;
+}
+
+async function finishVoiceJoin() {
+  inVoiceChannel = true;
+  leavingVoice = false;
+  if (myId) voicePeerIds.add(myId);
+  if (micBtn) micBtn.disabled = false;
+  await startMicCapture();
+  for (const member of roomMembers.values()) connectVoicePeer(member);
+  channelsMod.syncChannelChrome();
+  renderVoiceRoster();
+  applySidePanel();
+  applyRoomChrome();
+}
+
+async function leaveVoiceChannel() {
+  if (leavingVoice) return;
+  if (!inVoiceChannel && !state.voiceChannelId && !voicePeerIds.has(myId)) return;
+  leavingVoice = true;
+  try {
+    await channelsMod.leaveVoice();
+  } catch {
+    finishVoiceLeave();
+  } finally {
+    leavingVoice = false;
+  }
+}
+
+function finishVoiceLeave() {
+  inVoiceChannel = false;
+  voiceLeaveAt = Date.now();
+  if (myId) voicePeerIds.delete(myId);
+  if (micBtn) micBtn.disabled = true;
+  stopShare();
+  stopCamera();
+  stopMicCapture();
+  closeAllPeers();
+  channelsMod.syncChannelChrome();
+  renderVoiceRoster();
+  renderVoiceIdleCards();
+  applySidePanel();
+  applyRoomChrome();
+}
+
+async function onVoiceChannelClick() {
+  if (!inVoiceChannel) await joinVoiceChannel();
+  setActiveChannel('voice');
+}
+
+function renderVoiceRoster() {
+  const roster = document.getElementById('voice-roster');
+  if (!roster) return;
+  const rows = [];
+  const channelId = state.voiceChannelId;
+  if (inVoiceChannel && myName && channelId) {
+    rows.push({
+      id: myId || 'self',
+      name: myName,
+      self: true,
+      avatarUrl: accountUser && accountUser.avatarUrl,
+      live: selfIsLive(),
+    });
+  }
+  for (const member of roomMembers.values()) {
+    if (member.id === myId) continue;
+    if (!channelId || String(member.voiceChannelId || '') !== String(channelId)) continue;
+    rows.push({
+      id: member.id,
+      name: member.name || peerLabel(member.id),
+      self: false,
+      avatarUrl: member.avatarUrl,
+      live: peerIsLive(peers.get(member.id), member),
+    });
+  }
+  roster.replaceChildren(
+    ...rows.map((item) => {
+      const li = document.createElement('li');
+      li.className = `voice-roster-user${item.live ? ' is-live' : ''}`;
+      const avatar = document.createElement('span');
+      avatar.className = 'voice-roster-avatar';
+      if (item.avatarUrl) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = item.avatarUrl;
+        avatar.append(img);
+      } else {
+        avatar.textContent = letterFor(item.name);
+      }
+      const name = document.createElement('span');
+      name.className = 'voice-roster-name';
+      name.textContent = item.self ? `${item.name} ${t('you_suffix')}` : item.name;
+      li.append(avatar, name);
+      if (item.live) {
+        const dot = document.createElement('span');
+        dot.className = 'live-dot';
+        dot.title = t('live');
+        li.append(dot);
+      }
+      return li;
+    })
+  );
+}
+
+function renderVoiceIdleCards() {
+  if (!voiceIdleGrid) return;
+  const idle = activeChannel === 'voice' && inVoiceChannel && !hasLiveStreams();
+  voiceIdleGrid.hidden = !idle;
+  if (!idle) {
+    voiceIdleGrid.replaceChildren();
+    return;
+  }
+  const rows = [];
+  if (myName) {
+    rows.push({
+      name: myName,
+      avatarUrl: accountUser && accountUser.avatarUrl,
+      live: selfIsLive(),
+    });
+  }
+  for (const member of roomMembers.values()) {
+    if (!member.inVoice || member.id === myId) continue;
+    rows.push({
+      name: member.name || peerLabel(member.id),
+      avatarUrl: member.avatarUrl,
+      live: peerIsLive(peers.get(member.id), member),
+    });
+  }
+  voiceIdleGrid.replaceChildren(
+    ...rows.map((item) => {
+      const card = document.createElement('div');
+      card.className = `voice-idle-card${item.live ? ' is-live' : ''}`;
+      const avatar = document.createElement('span');
+      avatar.className = 'voice-idle-card-avatar';
+      if (item.avatarUrl) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = item.avatarUrl;
+        avatar.append(img);
+      } else {
+        avatar.textContent = letterFor(item.name);
+      }
+      const name = document.createElement('span');
+      name.className = 'voice-idle-card-name';
+      name.textContent = item.name;
+      card.append(avatar, name);
+      return card;
+    })
+  );
 }
 
 function setHomeAuth(mode) {
@@ -349,7 +730,6 @@ function setHomeAuth(mode) {
   if (modeLogin) modeLogin.setAttribute('aria-selected', homeAuth === 'login' ? 'true' : 'false');
   if (modeRegister) modeRegister.setAttribute('aria-selected', homeAuth === 'register' ? 'true' : 'false');
   if (accountForm) accountForm.hidden = Boolean(accountUser) || homeAuth === 'guest';
-  if (accountUsernameHint) accountUsernameHint.hidden = homeAuth !== 'register';
   if (accountSubmit) accountSubmit.textContent = t(homeAuth === 'register' ? 'register' : 'log_in');
   if (accountTtlWarn) accountTtlWarn.hidden = homeAuth !== 'register';
   if (accountPassword) {
@@ -358,7 +738,6 @@ function setHomeAuth(mode) {
   syncTurnstile();
   if (usernameInput) usernameInput.required = homeStep === 'user' && !accountUser;
   if (roomNameInput) roomNameInput.required = homeStep === 'room' && homeAuth === 'guest';
-  if (passwordInput) passwordInput.required = homeStep === 'room' && homeAuth === 'guest';
 }
 
 function isPopOpen(el) {
@@ -397,22 +776,28 @@ function setPopOpen(el, open) {
 }
 
 function setAccountMenu(open) {
-  if (!accountMenu || !accountAvatarBtn) return;
+  if (!accountMenu) return;
   setPopOpen(accountMenu, open);
-  accountAvatarBtn.setAttribute('aria-expanded', isPopOpen(accountMenu) ? 'true' : 'false');
+  const expanded = isPopOpen(accountMenu) ? 'true' : 'false';
+  if (accountAvatarBtn) accountAvatarBtn.setAttribute('aria-expanded', expanded);
+  if (userSettingsBtn) userSettingsBtn.setAttribute('aria-expanded', expanded);
 }
 
 function renderAccountAvatar() {
   if (!accountAvatarBtn) return;
+  const inRoom = Boolean(roomView && !roomView.hidden);
   const logged = Boolean(accountUser);
-  accountAvatarBtn.hidden = !logged;
-  if (!logged) {
+  const show = logged || inRoom;
+  accountAvatarBtn.hidden = !show;
+  if (!show) {
     setAccountMenu(false);
     return;
   }
+  const name = logged ? accountUser.username : myName;
+  const url = logged ? accountUser.avatarUrl : '';
   if (accountAvatarImg) {
-    if (accountUser.avatarUrl) {
-      accountAvatarImg.src = accountUser.avatarUrl;
+    if (url) {
+      accountAvatarImg.src = url;
       accountAvatarImg.hidden = false;
     } else {
       accountAvatarImg.removeAttribute('src');
@@ -420,9 +805,11 @@ function renderAccountAvatar() {
     }
   }
   if (accountAvatarLetter) {
-    accountAvatarLetter.hidden = Boolean(accountUser.avatarUrl);
-    accountAvatarLetter.textContent = letterFor(accountUser.username);
+    accountAvatarLetter.hidden = Boolean(url);
+    accountAvatarLetter.textContent = letterFor(name);
   }
+  if (userBarName) userBarName.textContent = name || t('you');
+  if (accountMenu) accountMenu.dataset.guest = logged ? 'false' : 'true';
 }
 
 function hidePinTip() {
@@ -486,38 +873,11 @@ function delayHidePinTip() {
 }
 
 function loadGuestPins() {
-  try {
-    const raw = localStorage.getItem(GUEST_PINS_KEY);
-    if (!raw) return [];
-    const data = JSON.parse(raw);
-    if (!Array.isArray(data)) return [];
-    return data
-      .filter((pin) => pin && typeof pin.nameKey === 'string' && pin.nameKey)
-      .map((pin) => ({
-        nameKey: pin.nameKey,
-        label: String(pin.label || pin.nameKey),
-        iconUrl: String(pin.iconUrl || ''),
-        password: String(pin.password || ''),
-        username: String(pin.username || ''),
-        pinned: true,
-      }));
-  } catch {
-    return [];
-  }
+  return pinsMod.loadGuestPins();
 }
 
 function saveGuestPins() {
-  try {
-    localStorage.setItem(GUEST_PINS_KEY, JSON.stringify(guestPins.map((pin) => ({
-      nameKey: pin.nameKey,
-      label: pin.label,
-      iconUrl: pin.iconUrl || '',
-      password: pin.password || '',
-      username: pin.username || '',
-    }))));
-  } catch {
-    // ignore quota
-  }
+  pinsMod.saveGuestPins(guestPins);
 }
 
 function pinSource() {
@@ -526,34 +886,37 @@ function pinSource() {
 
 function currentSeatPin() {
   return {
-    nameKey: currentNameKey,
-    label: currentRoomLabel || currentNameKey,
+    roomId: currentRoomId || currentNameKey,
+    nameKey: currentRoomId || currentNameKey,
+    inviteCode: currentInviteCode || state.inviteCode,
+    label: currentRoomLabel || currentInviteCode || currentNameKey,
     iconUrl: currentIconUrl || '',
-    password: currentRoomPassword || '',
     username: myName || '',
     pinned: false,
   };
 }
 
 function rememberGuestPinMeta() {
-  if (accountUser || !currentNameKey) return;
-  const idx = guestPins.findIndex((pin) => pin.nameKey === currentNameKey);
+  if (accountUser || !(currentRoomId || currentInviteCode)) return;
+  const key = currentRoomId || currentInviteCode;
+  const idx = guestPins.findIndex((pin) => (pin.roomId || pin.inviteCode || pin.nameKey) === key);
   if (idx === -1) return;
   guestPins[idx] = {
     ...guestPins[idx],
+    roomId: currentRoomId || guestPins[idx].roomId,
+    inviteCode: currentInviteCode || guestPins[idx].inviteCode,
     label: currentRoomLabel || guestPins[idx].label,
     iconUrl: currentIconUrl || guestPins[idx].iconUrl || '',
-    password: currentRoomPassword || guestPins[idx].password || '',
     username: myName || guestPins[idx].username || '',
     pinned: true,
   };
-  saveGuestPins();
+  pinsMod.saveGuestPins(guestPins);
 }
 
 function railRooms() {
   const rooms = pinSource().map((pin) => ({ ...pin, pinned: pin.pinned !== false }));
-  if (currentNameKey && !roomView.hidden) {
-    const seated = rooms.some((pin) => pin.nameKey === currentNameKey);
+  if (currentRoomId && !roomView.hidden) {
+    const seated = rooms.some((pin) => (pin.roomId || pin.nameKey) === currentRoomId);
     if (!seated) rooms.push(currentSeatPin());
   }
   return rooms;
@@ -567,10 +930,11 @@ function renderPins() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'pin-btn';
-    btn.dataset.nameKey = pin.nameKey;
+    const pinId = pin.roomId || pin.nameKey || pin.inviteCode || '';
+    btn.dataset.nameKey = pinId;
     btn.dataset.pinned = pin.pinned ? 'true' : 'false';
     btn.setAttribute('aria-label', pin.label);
-    btn.setAttribute('aria-current', pin.nameKey === currentNameKey ? 'true' : 'false');
+    btn.setAttribute('aria-current', pinId && pinId === (currentRoomId || currentNameKey) ? 'true' : 'false');
     const face = document.createElement('span');
     face.className = 'pin-face';
     if (pin.iconUrl) {
@@ -586,8 +950,8 @@ function renderPins() {
     btn.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       hidePinTip();
-      if (pin.pinned) unpinRoom(pin.nameKey);
-      else pinRoom(pin.nameKey);
+      if (pin.pinned) unpinRoom(pinId);
+      else pinRoom(pinId);
     });
     btn.addEventListener('pointerenter', () => showPinTip(btn, pin));
     btn.addEventListener('pointerleave', () => delayHidePinTip());
@@ -621,11 +985,10 @@ function setRoomIconButton(info) {
 
 async function loadAccount() {
   try {
-    const res = await fetch('/api/account', { credentials: 'same-origin' });
-    if (!res.ok) throw new Error('account');
-    const data = await res.json();
+    const data = await accountMod.loadAccountState();
     accountUser = data.user || null;
     accountPins = accountUser && Array.isArray(data.pins) ? data.pins : [];
+    requestsMod.setPendingRequests(data.pendingJoinRequests || []);
   } catch {
     accountUser = null;
     accountPins = [];
@@ -825,61 +1188,31 @@ function showJoinError(message) {
 }
 
 async function rejoinPinned(pin) {
-  if (!pin || !pin.nameKey) return;
-  if (pin.nameKey === currentNameKey && !roomView.hidden) return;
+  const roomId = pin.roomId || pin.nameKey;
+  const inviteCode = pin.inviteCode;
+  if (!roomId && !inviteCode) return;
+  if (roomId && roomId === currentRoomId && !roomView.hidden) return;
   hidePinTip();
   if (!accountUser) {
-    if (!pin.password || !pin.username) {
-      openRoomModal({
-        mode: 'join',
-        name: pin.label || pin.nameKey,
-      });
+    if (!inviteCode) {
+      openRoomModal({ mode: 'join', name: pin.label || inviteCode || '' });
       return;
     }
     try {
-      const res = await fetch('/api/rooms/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          name: pin.label || pin.nameKey,
-          password: pin.password,
-          username: pin.username,
-        }),
-      });
-      if (!res.ok) {
-        showJoinError(await readError(res, t('could_not_enter')));
-        return;
-      }
-      const info = await res.json();
-      if (!roomView.hidden) {
-        await returnHome({ notifyServer: false });
-      }
-      currentRoomPassword = pin.password;
+      const info = await homeMod.joinRoom({ inviteCode, username: pin.username });
+      if (!roomView.hidden) await returnHome({ notifyServer: false });
       await enterRoom(info);
-    } catch {
-      showJoinError(t('could_not_reach'));
+    } catch (err) {
+      showJoinError(err.message || t('could_not_reach'));
     }
     return;
   }
   try {
-    const res = await fetch('/api/rooms/rejoin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ nameKey: pin.nameKey }),
-    });
-    if (!res.ok) {
-      showJoinError(await readError(res, t('could_not_enter')));
-      return;
-    }
-    const info = await res.json();
-    if (!roomView.hidden) {
-      await returnHome({ notifyServer: false });
-    }
+    const info = await homeMod.rejoinRoom(roomId);
+    if (!roomView.hidden) await returnHome({ notifyServer: false });
     await enterRoom(info);
-  } catch {
-    showJoinError(t('could_not_reach'));
+  } catch (err) {
+    showJoinError(err.message || t('could_not_enter'));
   }
 }
 
@@ -890,10 +1223,11 @@ async function pinRoom(nameKey) {
     const seated = currentNameKey === nameKey ? currentSeatPin() : null;
     const existing = guestPins.find((pin) => pin.nameKey === nameKey);
     const next = {
+      roomId: (seated && seated.roomId) || (existing && existing.roomId) || nameKey,
       nameKey,
+      inviteCode: (seated && seated.inviteCode) || (existing && existing.inviteCode) || '',
       label: (seated && seated.label) || (existing && existing.label) || nameKey,
       iconUrl: (seated && seated.iconUrl) || (existing && existing.iconUrl) || '',
-      password: (seated && seated.password) || (existing && existing.password) || '',
       username: (seated && seated.username) || (existing && existing.username) || '',
       pinned: true,
     };
@@ -907,7 +1241,7 @@ async function pinRoom(nameKey) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ nameKey }),
+      body: JSON.stringify({ roomId: nameKey, nameKey }),
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -931,7 +1265,7 @@ async function unpinRoom(nameKey) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ nameKey }),
+      body: JSON.stringify({ roomId: nameKey, nameKey }),
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -967,15 +1301,10 @@ function setModalKind(kind) {
 }
 
 function syncModalFields() {
-  if (modalCreateTtl) modalCreateTtl.hidden = modalRoomMode !== 'create' || modalStep !== 'room' || modalPermanentOn;
-  if (modalPermanentField) {
-    modalPermanentField.hidden = modalRoomMode !== 'create' || modalStep !== 'room' || !accountUser;
-  }
-  if (modalRoomName) {
-    modalRoomName.required = modalStep === 'room';
-    modalRoomName.placeholder = modalRoomMode === 'join' ? t('room_placeholder') : '';
-  }
-  if (modalRoomPassword) modalRoomPassword.required = modalStep === 'room';
+  if (modalCreateTtl) modalCreateTtl.hidden = true;
+  if (modalPermanentField) modalPermanentField.hidden = true;
+  homeMod.syncVisibilityFields(homeMode, modalRoomMode);
+  if (modalRoomName) modalRoomName.required = modalStep === 'room';
   if (modalUsername) modalUsername.required = modalStep === 'user' && !accountUser;
   if (modalRoomSubmit) {
     modalRoomSubmit.textContent = modalStep === 'user' || (modalStep === 'room' && accountUser)
@@ -1031,10 +1360,9 @@ function setRoomModal(open) {
 
 function openRoomModal(options = {}) {
   if (cropper && !cropper.hidden) return;
-  if (modalRoomName) modalRoomName.value = options.name || '';
-  if (modalRoomPassword) modalRoomPassword.value = options.password || '';
+  if (modalRoomName) modalRoomName.value = options.inviteCode || options.name || '';
   if (modalUsername) modalUsername.value = options.username || '';
-  pendingModal = { name: options.name || '', password: options.password || '', kind: 'screenshare' };
+  pendingModal = { name: options.name || '', inviteCode: options.inviteCode || '', kind: 'screenshare' };
   setModalPermanent(false);
   setModalKind('screenshare');
   setModalRoomMode(options.mode === 'create' ? 'create' : 'join');
@@ -1042,66 +1370,73 @@ function openRoomModal(options = {}) {
   setRoomModal(true);
 }
 
-async function enterJoinedRoom(info, password, joinName) {
-  if (info.permanent) cachePermanentRoom(info.name || joinName, password);
+async function enterJoinedRoom(info) {
   setRoomModal(false);
   if (!roomView.hidden) {
     await returnHome({ notifyServer: false });
   }
-  currentRoomPassword = password || '';
   await enterRoom(info);
 }
 
-async function joinAccountRoom({ name, password, username, create, permanent, kind, onError, onBusy }) {
+async function joinAccountRoom({ name, inviteCode, username, create, visibility, kind, onError, onBusy }) {
   const fail = (message) => {
     if (onError) onError(message);
   };
   const busy = (value) => {
     if (onBusy) onBusy(value);
   };
-  if (!name || !password || (!accountUser && !username)) {
+  if (create && !accountUser) {
+    fail(t('auth_required'));
+    return false;
+  }
+  if (create && !name) {
+    fail(t('enter_fields'));
+    return false;
+  }
+  if (!create && !inviteCode) {
+    fail(t('enter_fields'));
+    return false;
+  }
+  if (!accountUser && !username && !create) {
     fail(t('enter_fields'));
     return false;
   }
   busy(true);
   try {
-    let joinName = name;
+    let code = inviteCode;
     if (create) {
-      const createdRes = await fetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          name,
-          password,
-          permanent: Boolean(accountUser && permanent),
-          kind: kind === 'watchparty' ? 'watchparty' : 'screenshare',
-        }),
+      const created = await homeMod.createRoom({
+        name,
+        visibility: visibility || state.homeVisibility || 'public',
+        kind: kind === 'watchparty' ? 'watchparty' : 'screenshare',
       });
-      if (!createdRes.ok) {
-        fail(await readError(createdRes, t('could_not_create')));
+      code = created.inviteCode;
+    }
+    try {
+      const info = await homeMod.joinRoom({ inviteCode: code, username });
+      await enterJoinedRoom(info);
+      return true;
+    } catch (err) {
+      if (err.code === 'join_private' || err.code === 'auth_required') {
+        if (!accountUser) {
+          fail(t('auth_required'));
+          return false;
+        }
+        const requested = await homeMod.requestJoin(code);
+        if (requested && requested.joined) {
+          await enterJoinedRoom(requested.joined);
+          return true;
+        }
+        const wait = document.getElementById('join-wait');
+        if (wait) wait.hidden = false;
+        fail(t('join_pending'));
         return false;
       }
-      const created = await createdRes.json();
-      joinName = created.label || created.name || name;
-    }
-    const payload = { name: joinName, password };
-    if (!accountUser) payload.username = username;
-    const res = await fetch('/api/rooms/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      fail(await readError(res, t('could_not_enter')));
+      fail(err.message || t('could_not_enter'));
       return false;
     }
-    const info = await res.json();
-    await enterJoinedRoom(info, password, joinName);
-    return true;
-  } catch {
-    fail(t('could_not_reach'));
+  } catch (err) {
+    fail(err.message || t('could_not_reach'));
     return false;
   } finally {
     busy(false);
@@ -1239,57 +1574,28 @@ function labelsEqual(a, b) {
 }
 
 function parseRoomInvite() {
-  const parts = location.pathname.split('/').filter(Boolean);
-  if (parts[0] === 'r' && parts[1]) {
-    let name = parts[1];
-    let tag = parts[2] || '';
-    try {
-      name = decodeURIComponent(name);
-      tag = tag ? decodeURIComponent(tag) : '';
-    } catch {
-      return null;
-    }
-    const parsed = splitRoomLabel(tag ? `${name}#${tag}` : name);
-    return parsed.name ? parsed : null;
-  }
-  const params = new URLSearchParams(location.search);
-  const room = params.get('room');
-  if (!room) return null;
-  const tagParam = params.get('tag');
-  const parsed = splitRoomLabel(tagParam ? `${room}#${tagParam}` : room);
-  return parsed.name ? parsed : null;
+  return homeMod.parseRoomInvite();
 }
 
-function roomInvitePath(label) {
-  const parsed = splitRoomLabel(label);
-  if (!parsed.name) return '/';
-  const name = encodeURIComponent(parsed.name);
-  return parsed.tag ? `/r/${name}/${encodeURIComponent(parsed.tag)}` : `/r/${name}`;
+function roomInvitePath() {
+  return homeMod.roomInvitePath(currentInviteCode || state.inviteCode);
 }
 
-function roomInviteUrl(label = currentRoomLabel) {
-  return `${location.origin}${roomInvitePath(label)}`;
+function roomInviteUrl() {
+  return homeMod.roomInviteUrl(currentInviteCode || state.inviteCode);
 }
 
-function setRoomInviteUrl(label) {
-  const next = roomInvitePath(label);
-  if (`${location.pathname}${location.search}` === next) return;
-  history.replaceState(null, '', next);
+function setRoomInviteUrl() {
+  homeMod.setRoomInviteUrl(currentInviteCode || state.inviteCode);
 }
 
 function clearRoomInviteUrl() {
-  if (location.pathname === '/' && !location.search) return;
-  history.replaceState(null, '', '/');
+  homeMod.clearRoomInviteUrl();
 }
 
 function applyRoomInvite(invite) {
-  if (!invite || !invite.label) return;
+  homeMod.applyRoomInvite(invite);
   setHomeMode('join');
-  roomNameInput.value = invite.label;
-  const cached = loadCachedRoom();
-  if (!cached || !labelsEqual(cached.name, invite.label)) {
-    passwordInput.value = '';
-  }
 }
 
 function setRoomLabel(label) {
@@ -1300,7 +1606,7 @@ function setRoomLabel(label) {
 }
 
 async function copyRoomLink() {
-  if (!currentRoomLabel) return;
+  if (!currentInviteCode && !currentRoomLabel) return;
   const url = roomInviteUrl();
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1339,9 +1645,11 @@ function applyUiLanguage() {
   setFloatOpen(floatBtn.dataset.open === 'true');
   syncMicControls();
   renderPeopleList();
+  renderVoiceRoster();
   syncChatDeleteLabels();
   syncWatchControls();
   applyRoomChrome();
+  setActiveChannel(activeChannel);
   applyLayout();
   refreshRemoteMedia();
   renderPins();
@@ -1358,7 +1666,7 @@ function loadCachedRoom() {
     const raw = localStorage.getItem(ROOM_CACHE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || typeof data.name !== 'string' || typeof data.password !== 'string') return null;
+    if (!data || typeof data.name !== 'string') return null;
     return data;
   } catch {
     return null;
@@ -1368,19 +1676,18 @@ function loadCachedRoom() {
 function rememberLastRoom(info) {
   const prev = loadCachedRoom() || {};
   const name = (info && (info.label || info.name)) || prev.name || '';
-  const password = currentRoomPassword || prev.password || '';
+  const inviteCode = (info && info.inviteCode) || currentInviteCode || prev.inviteCode || '';
   const username = (info && info.username) || myName || prev.username || '';
-  const nameKey = (info && info.nameKey) || currentNameKey || prev.nameKey || '';
-  if (!name || !password) return;
+  const roomId = (info && (info.id || info.roomId)) || currentRoomId || prev.roomId || '';
+  if (!name || !inviteCode) return;
   try {
-    localStorage.setItem(ROOM_CACHE_KEY, JSON.stringify({ name, password, username, nameKey }));
+    localStorage.setItem(ROOM_CACHE_KEY, JSON.stringify({ name, inviteCode, username, roomId }));
   } catch {
     // ignore
   }
 }
 
-function cachePermanentRoom(name, password) {
-  if (password) currentRoomPassword = currentRoomPassword || password;
+function cachePermanentRoom(name) {
   rememberLastRoom({ name });
 }
 
@@ -1394,25 +1701,13 @@ function clearLastRoom() {
 
 async function resumeLastRoom() {
   const cached = loadCachedRoom();
-  if (!cached || !cached.name || !cached.password) return false;
+  if (!cached || !cached.inviteCode) return false;
   if (!accountUser && !cached.username) return false;
   try {
-    const res = await fetch('/api/rooms/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({
-        name: cached.name,
-        password: cached.password,
-        username: cached.username,
-      }),
+    const info = await homeMod.joinRoom({
+      inviteCode: cached.inviteCode,
+      username: cached.username,
     });
-    if (!res.ok) {
-      if (res.status === 404) clearLastRoom();
-      return false;
-    }
-    const info = await res.json();
-    currentRoomPassword = cached.password;
     await enterRoom(info);
     return true;
   } catch {
@@ -1423,15 +1718,22 @@ async function resumeLastRoom() {
 function prefillJoinForm() {
   const cached = loadCachedRoom();
   if (!cached) return;
-  roomNameInput.value = cached.name;
-  passwordInput.value = cached.password;
+  roomNameInput.value = cached.inviteCode || cached.name || '';
 }
 
 function renderPeopleList() {
+  if (!peopleList) return;
   const rows = [];
   if (myName) rows.push({ id: 'self', name: myName, self: true });
-  for (const peer of peers.values()) {
-    rows.push({ id: peer.id, name: peer.name || peerLabel(peer.id), self: false, peer });
+  for (const member of roomMembers.values()) {
+    if (member.id === myId) continue;
+    rows.push({
+      id: member.id,
+      name: member.name || peerLabel(member.id),
+      self: false,
+      peer: peers.get(member.id),
+      member,
+    });
   }
   const openId = voicePeerId;
   peopleList.replaceChildren(
@@ -1450,7 +1752,7 @@ function renderPeopleList() {
       avatar.className = 'person-avatar';
       const avatarUrl = item.self
         ? (accountUser && accountUser.avatarUrl)
-        : (item.peer && item.peer.avatarUrl);
+        : ((item.member && item.member.avatarUrl) || (item.peer && item.peer.avatarUrl));
       if (avatarUrl) {
         const img = document.createElement('img');
         img.alt = '';
@@ -1493,10 +1795,10 @@ function renderPeopleList() {
       if (item.self) {
         mic.addEventListener('click', (event) => {
           event.stopPropagation();
-          if (micBtn.disabled) return;
-          setMicOpen(!isPopOpen(micPanel));
+          if (micBtn && micBtn.disabled) return;
+          setAccountMenu(!isPopOpen(accountMenu));
         });
-      } else {
+      } else if (item.peer) {
         const pop = document.createElement('div');
         pop.className = 'voice-pop';
         pop.hidden = openId !== item.id;
@@ -1538,6 +1840,7 @@ function renderPeopleList() {
 }
 
 function refreshPeopleVoice() {
+  if (!peopleList) return;
   for (const li of peopleList.querySelectorAll('li')) {
     const mic = li.querySelector('.person-mic');
     const pop = li.querySelector('.voice-pop');
@@ -1586,27 +1889,20 @@ function syncMicControls() {
 }
 
 function setMicLive(live) {
+  if (!micBtn) return;
   micBtn.dataset.live = live ? 'true' : 'false';
   micBtn.dataset.muted = live ? 'false' : 'true';
   micBtn.setAttribute('aria-pressed', live ? 'true' : 'false');
 }
 
 function setMicOpen(open) {
-  if (open) setPeopleOpen(false);
   voicePeerId = null;
   refreshPeopleVoice();
-  setPopOpen(micPanel, open);
-  micBtn.setAttribute('aria-expanded', isPopOpen(micPanel) ? 'true' : 'false');
+  setAccountMenu(open);
 }
 
 function setPeopleOpen(open) {
-  if (open) setMicOpen(false);
-  setPopOpen(peoplePanel, open);
-  peerStatus.setAttribute('aria-expanded', isPopOpen(peoplePanel) ? 'true' : 'false');
-  if (!isPopOpen(peoplePanel)) {
-    voicePeerId = null;
-    refreshPeopleVoice();
-  }
+  setMembersOpen(open);
 }
 
 function isLive(pane) {
@@ -1736,15 +2032,17 @@ function applyLayout() {
   }
   syncPipButtons();
   placeCamChrome();
+  renderVoiceRoster();
+  applySidePanel();
 }
 
 function setPeerStatus() {
-  const count = (myName ? 1 : 0) + peers.size;
+  const count = (myName ? 1 : 0) + roomMembers.size;
   if (peerCount) {
-    peerCount.textContent = roomKind === 'watchparty' ? String(count) : `${count} / ${MAX_PEOPLE}`;
+    peerCount.textContent = String(count);
   }
-  peerStatus.dataset.state = count > 1 ? 'connected' : 'waiting';
   renderPeopleList();
+  renderVoiceRoster();
 }
 
 function isWatchpartyRoom() {
@@ -1758,7 +2056,7 @@ function watchActive() {
 function iAmWatchHost() {
   if (!watchState || !myId) return false;
   if (watchState.hostPeerId && watchState.hostPeerId === myId) return true;
-  if (watchState.hostUserId && accountUser && Number(watchState.hostUserId) === Number(accountUser.id)) return true;
+  if (watchState.hostUserId && accountUser && String(watchState.hostUserId) === String(accountUser.id)) return true;
   return false;
 }
 
@@ -1775,9 +2073,16 @@ function applyRoomChrome() {
     watchBtn.setAttribute('aria-expanded', isPopOpen(watchSheet) ? 'true' : 'false');
   }
   if (watchStopBtn) watchStopBtn.hidden = !watchActive() || !canManageWatch;
+  if (leaveBtn) {
+    const inVoice = Boolean(inVoiceChannel || state.voiceChannelId);
+    leaveBtn.setAttribute('aria-label', t(inVoice ? 'disconnect_voice' : 'leave'));
+    leaveBtn.dataset.voice = inVoice ? 'true' : 'false';
+  }
+  applySidePanel();
 }
 
 function showRoomError(message) {
+  if (!roomError) return;
   if (!message) {
     roomError.hidden = true;
     roomError.textContent = '';
@@ -2244,6 +2549,7 @@ function stopMicCapture() {
 }
 
 async function setMicUnmuted(on) {
+  if (!inVoiceChannel && on) return;
   if (on && !micRawStream) {
     await startMicCapture();
     if (!micRawStream) return;
@@ -2324,12 +2630,13 @@ function detachRemoteMic(peer) {
 function attachRemoteMic(peer, mid, track) {
   detachRemoteMic(peer);
   if (!track || track.kind !== 'audio') return;
-  track.enabled = true;
+  track.enabled = inVoiceChannel;
   const stream = new MediaStream([track]);
   const el = peer.voiceEl || new Audio();
   peer.voiceEl = el;
   el.autoplay = true;
   el.playsInline = true;
+  el.muted = !inVoiceChannel;
   el.srcObject = stream;
   el.play().catch(() => {});
   const ctx = ensureVoiceCtx();
@@ -3055,6 +3362,7 @@ function setCameraLive(live) {
   cameraBtn.setAttribute('aria-pressed', live ? 'true' : 'false');
   if (!live && featuredView.kind === 'self') featuredView = { kind: 'pane' };
   refreshRemoteMedia();
+  applyLayout();
 }
 
 function cameraTrack() {
@@ -3767,11 +4075,7 @@ function createRemotePane(id) {
     </div>
     <button class="unmute" hidden type="button">Click to hear them</button>
     <div class="pane-controls">
-      <button class="pane-reload" type="button" aria-label="Reload stream" title="Reload stream">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/>
-        </svg>
-      </button>
+      <button class="pane-reload" type="button" aria-label="Reload stream" title="Reload stream">${PANE_RELOAD_SVG}</button>
       <button class="pane-pip" type="button" aria-label="Picture-in-picture" title="Picture-in-picture" aria-pressed="false">${PANE_PIP_SVG}</button>
       <input class="pane-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" title="Volume" />
     </div>
@@ -4054,8 +4358,11 @@ function closeAllPeers() {
 }
 
 async function handleSignal(from, data) {
+  if (!inVoiceChannel) return;
+  const member = roomMembers.get(from);
+  if (member && !member.inVoice) return;
   if (data.type === 'restart') {
-    resetPeer(from);
+    resetPeer(from, member && member.name, member);
     return;
   }
   const peer = ensurePeer(from);
@@ -4114,42 +4421,92 @@ async function handleSignal(from, data) {
 
 function peerEntry(item) {
   if (!item) return null;
-  if (typeof item === 'string') return { id: item, name: '' };
+  if (typeof item === 'string') return { id: item, name: '', inVoice: false, voiceChannelId: null };
   return {
     id: item.id,
     name: item.name || '',
     userId: item.userId || null,
     avatarUrl: item.avatarUrl || null,
+    inVoice: Boolean(item.inVoice),
+    voiceChannelId: item.voiceChannelId || null,
   };
 }
 
 async function handleRoomMessage(msg) {
+  if (requestsMod.handleRequestEvent(msg)) return;
+  if (msg.type === 'channel-added' || msg.type === 'channel-renamed') {
+    if (msg.channel && msg.channel.id) {
+      const rest = state.channels.filter((ch) => ch.id !== msg.channel.id);
+      channelsMod.setChannels([...rest, msg.channel]);
+    }
+    return;
+  }
+  if (msg.type === 'channel-deleted') {
+    channelsMod.applyDeletedChannel(
+      msg.channelId || (msg.channel && msg.channel.id),
+      msg.channels,
+      msg.voiceCounts
+    );
+    return;
+  }
+  if (webrtcMod.applyVoiceEvent(msg, {
+    myId,
+    upsert: upsertRoomMember,
+    connect: connectVoicePeer,
+    remove: removePeer,
+    render() {
+      channelsMod.syncChannelChrome();
+      renderVoiceRoster();
+      applySidePanel();
+      applyRoomChrome();
+    },
+  })) return;
   if (msg.type === 'hello') {
     myId = msg.id;
     if (msg.name) setYouName(msg.name);
     const listed = (msg.peers || []).map(peerEntry).filter((peer) => peer && peer.id);
     const listedIds = new Set(listed.map((peer) => peer.id));
+    roomMembers.clear();
+    voicePeerIds.clear();
+    for (const peer of listed) upsertRoomMember(peer);
+    if (inVoiceChannel && myId) voicePeerIds.add(myId);
+    else if (msg.inVoice && myId) voicePeerIds.add(myId);
     for (const id of [...peers.keys()]) {
-      if (!listedIds.has(id)) removePeer(id);
+      if (!listedIds.has(id) || !voicePeerIds.has(id)) removePeer(id);
     }
-    for (const peer of listed) {
-      const existing = peers.get(peer.id);
-      if (!existing) {
-        ensurePeer(peer.id, peer.name, peer);
-        sendSignal(peer.id, { type: 'restart' });
-        continue;
+    if (inVoiceChannel) {
+      if (!msg.inVoice) {
+        fetch('/api/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ action: 'join', channelId: state.voiceChannelId }),
+        }).catch(() => {});
       }
-      setPeerName(peer.id, peer.name, peer);
-      const ice = existing.pc.iceConnectionState;
-      const conn = existing.pc.connectionState;
-      if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
+      for (const peer of listed) {
+        if (!peer.inVoice) continue;
+        const existing = peers.get(peer.id);
+        if (!existing) {
+          connectVoicePeer(peer);
+          continue;
+        }
+        setPeerName(peer.id, peer.name, peer);
+        const ice = existing.pc.iceConnectionState;
+        const conn = existing.pc.connectionState;
+        if (ice === 'failed' || conn === 'failed') recoverPeer(existing);
+      }
     }
+    if (msg.channels) channelsMod.setChannels(msg.channels);
+    if (msg.voiceCounts) state.voiceCounts = msg.voiceCounts;
+    if (msg.voiceChannelId) state.voiceChannelId = String(msg.voiceChannelId);
+    if (msg.pendingJoinRequests) requestsMod.setPendingRequests(msg.pendingJoinRequests);
     if (msg.kind) roomKind = msg.kind === 'watchparty' ? 'watchparty' : 'screenshare';
     if (Object.prototype.hasOwnProperty.call(msg, 'watch')) {
       applyWatchState(msg.watch, { action: 'set', canManageWatch: iAmCreator || iAmWatchHost(), serverAt: Date.now() });
     }
     applyRoomChrome();
     setPeerStatus();
+    renderVoiceRoster();
     refreshRemoteMedia();
     return;
   }
@@ -4160,8 +4517,40 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'peer-joined') {
-    if (msg.id && msg.id !== myId) resetPeer(msg.id, msg.name, msg);
+    if (msg.id && msg.id !== myId) {
+      const member = upsertRoomMember(peerEntry(msg));
+      if (inVoiceChannel && member && member.inVoice) connectVoicePeer(member);
+      setPeerStatus();
+      renderVoiceRoster();
+    }
     showRoomError('');
+    return;
+  }
+
+  if (msg.type === 'voice-joined') {
+    if (msg.id && msg.id !== myId) {
+      const prev = roomMembers.get(msg.id) || { id: msg.id, name: '', inVoice: true };
+      prev.inVoice = true;
+      upsertRoomMember(prev);
+      if (inVoiceChannel) connectVoicePeer(prev);
+      renderVoiceRoster();
+      applySidePanel();
+    }
+    return;
+  }
+
+  if (msg.type === 'voice-left') {
+    if (msg.id && msg.id !== myId) {
+      const prev = roomMembers.get(msg.id);
+      if (prev) {
+        prev.inVoice = false;
+        upsertRoomMember(prev);
+      }
+      voicePeerIds.delete(msg.id);
+      removePeer(msg.id);
+      renderVoiceRoster();
+      applySidePanel();
+    }
     return;
   }
 
@@ -4171,7 +4560,11 @@ async function handleRoomMessage(msg) {
   }
 
   if (msg.type === 'peer-left') {
+    roomMembers.delete(msg.id);
+    voicePeerIds.delete(msg.id);
     removePeer(msg.id);
+    setPeerStatus();
+    renderVoiceRoster();
     return;
   }
 
@@ -4277,10 +4670,58 @@ function removeChatMessage(id) {
   if (line) line.remove();
 }
 
+function formatChatTime(ts) {
+  const date = new Date(Number(ts) || 0);
+  if (!Number.isFinite(date.getTime()) || date.getTime() <= 0) return '';
+  const loc = getLang() === 'pt' ? 'pt-BR' : 'en-US';
+  const now = new Date();
+  const time = date.toLocaleTimeString(loc, { hour: 'numeric', minute: '2-digit' });
+  if (date.toDateString() === now.toDateString()) return time;
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const day = date.toLocaleDateString(loc, sameYear
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${day} ${time}`;
+}
+
+function chatAvatarUrl(row) {
+  if (row && row.avatarUrl) return row.avatarUrl;
+  const member = row && row.peerId ? roomMembers.get(row.peerId) : null;
+  if (member && member.avatarUrl) return member.avatarUrl;
+  if (row && myId && String(row.peerId) === String(myId) && accountUser && accountUser.avatarUrl) {
+    return accountUser.avatarUrl;
+  }
+  return '';
+}
+
+function renderChatAvatar(row) {
+  const el = document.createElement('span');
+  el.className = 'chat-avatar';
+  el.setAttribute('aria-hidden', 'true');
+  const url = chatAvatarUrl(row);
+  if (url) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = url;
+    img.addEventListener('error', () => {
+      el.replaceChildren();
+      el.textContent = letterFor(row && row.username);
+    });
+    el.append(img);
+    return el;
+  }
+  el.textContent = letterFor(row && row.username);
+  return el;
+}
+
 function syncChatDeleteLabels() {
   if (!chatLog) return;
   for (const btn of chatLog.querySelectorAll('.chat-delete')) {
     btn.setAttribute('aria-label', t('delete_message'));
+  }
+  for (const time of chatLog.querySelectorAll('.chat-time')) {
+    const ts = Date.parse(time.dateTime || '');
+    if (Number.isFinite(ts)) time.textContent = formatChatTime(ts);
   }
 }
 
@@ -4291,14 +4732,29 @@ function appendChatMessage(row) {
   const line = document.createElement('div');
   line.className = 'chat-line';
   line.dataset.id = id;
+  const content = document.createElement('div');
+  content.className = 'chat-content';
+  const meta = document.createElement('div');
+  meta.className = 'chat-meta';
   const name = document.createElement('span');
   name.className = 'chat-name';
   name.textContent = row.username || '';
   name.style.color = hashNameColor(row.usernameKey || row.username);
-  const body = document.createElement('span');
+  meta.append(name);
+  const createdAt = Number(row.createdAt || 0);
+  if (createdAt > 0) {
+    const time = document.createElement('time');
+    time.className = 'chat-time';
+    time.dateTime = new Date(createdAt).toISOString();
+    time.textContent = formatChatTime(createdAt);
+    time.title = new Date(createdAt).toLocaleString(getLang() === 'pt' ? 'pt-BR' : 'en-US');
+    meta.append(time);
+  }
+  const body = document.createElement('div');
   body.className = 'chat-body';
   body.textContent = row.body || '';
-  line.append(name, body);
+  content.append(meta, body);
+  line.append(renderChatAvatar(row), content);
   if (iAmCreator) {
     const del = document.createElement('button');
     del.type = 'button';
@@ -4307,7 +4763,8 @@ function appendChatMessage(row) {
     del.setAttribute('aria-label', t('delete_message'));
     del.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (chatSocket) chatSocket.emit('chat:delete', { id: Number(id) });
+      if (chatMod.deleteChat) chatMod.deleteChat(id);
+      else if (chatSocket) chatSocket.emit('chat:delete', { id: String(id) });
     });
     line.append(del);
   }
@@ -4320,53 +4777,47 @@ function appendChatMessage(row) {
 }
 
 function setChatOpen(open, options = {}) {
-  if (!chatOverlay || !chatBtn) return;
-  chatOpen = Boolean(open);
-  chatBtn.setAttribute('aria-expanded', chatOpen ? 'true' : 'false');
-  if (chatOpen) {
-    chatOverlay.hidden = false;
-    chatOverlay.setAttribute('aria-hidden', 'false');
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!chatOpen || !roomView) return;
-        roomView.dataset.chat = 'open';
-        chatStickBottom = true;
-        scrollChatIfNeeded();
-        if (chatInput) chatInput.focus();
-        applyLayout();
-      });
-    });
+  if (!chatBtn) return;
+  if (activeChannel !== 'voice') {
+    chatOpen = false;
+    chatBtn.setAttribute('aria-expanded', 'false');
+    applySidePanel();
     return;
   }
-  if (roomView) delete roomView.dataset.chat;
-  chatOverlay.setAttribute('aria-hidden', 'true');
-  window.setTimeout(() => {
-    if (!chatOpen) chatOverlay.hidden = true;
-  }, 220);
+  chatOpen = Boolean(open);
+  chatBtn.setAttribute('aria-expanded', chatOpen ? 'true' : 'false');
+  applySidePanel();
+  if (chatOpen) {
+    chatStickBottom = true;
+    scrollChatIfNeeded();
+    if (chatInput) chatInput.focus();
+    applyLayout();
+    return;
+  }
   if (options.restoreFocus !== false && roomView && !roomView.hidden) chatBtn.focus();
   applyLayout();
 }
 
 function disconnectChat() {
-  if (!chatSocket) return;
-  chatSocket.removeAllListeners();
-  chatSocket.disconnect();
+  chatMod.disconnectChat();
   chatSocket = null;
 }
 
 function connectChat() {
-  disconnectChat();
-  const socketIo = window.io;
-  if (typeof socketIo !== 'function') return;
-  chatSocket = socketIo({ path: '/socket.io', withCredentials: true });
-  chatSocket.on('chat:history', (rows) => {
-    clearChatLog();
-    for (const row of rows || []) appendChatMessage(row);
-    chatStickBottom = true;
-    scrollChatIfNeeded();
+  chatSocket = chatMod.connectChat({
+    onHistory(rows) {
+      clearChatLog();
+      for (const row of rows || []) appendChatMessage(row);
+      chatStickBottom = true;
+      scrollChatIfNeeded();
+    },
+    onMessage(row) {
+      appendChatMessage(row);
+    },
+    onDeleted(id) {
+      removeChatMessage(id);
+    },
   });
-  chatSocket.on('chat:message', (row) => appendChatMessage(row));
-  chatSocket.on('chat:deleted', (payload) => removeChatMessage(payload && payload.id));
 }
 
 function disconnectWatch() {
@@ -4382,7 +4833,7 @@ function applyIncomingWatch(state, action, serverAt) {
     serverAt,
     canManageWatch: iAmCreator || (state && (
       (state.hostPeerId && state.hostPeerId === myId)
-      || (state.hostUserId && accountUser && Number(state.hostUserId) === Number(accountUser.id))
+      || (state.hostUserId && accountUser && String(state.hostUserId) === String(accountUser.id))
     )),
   });
 }
@@ -5053,13 +5504,20 @@ async function enterRoom(info) {
   if (info && info.username) setYouName(info.username);
   iAmCreator = Boolean(info && info.isCreator);
   canEditIcon = Boolean(info && info.canEditIcon);
-  currentNameKey = (info && info.nameKey) || '';
+  currentNameKey = (info && (info.id || info.roomId || info.nameKey)) || '';
+  currentRoomId = currentNameKey;
+  currentInviteCode = (info && info.inviteCode) || '';
+  state.roomId = currentRoomId;
+  state.inviteCode = currentInviteCode;
+  state.visibility = (info && info.visibility) || 'public';
+  if (info && info.channels) channelsMod.setChannels(info.channels);
+  if (info && info.voiceChannelId) state.voiceChannelId = String(info.voiceChannelId);
   roomKind = info && info.kind === 'watchparty' ? 'watchparty' : 'screenshare';
   canManageWatch = Boolean(info && info.canManageWatch);
   applyWatchState(info && info.watch, { action: 'set', canManageWatch });
   rememberGuestPinMeta();
   setRoomLabel(info && (info.label || info.name));
-  setRoomInviteUrl(currentRoomLabel);
+  setRoomInviteUrl();
   setRoomIconButton(info);
   applyRoomChrome();
   const configRes = await fetch('/api/config', { credentials: 'same-origin' });
@@ -5071,6 +5529,15 @@ async function enterRoom(info) {
   }
   showView('room');
   floatBtn.hidden = !desktop;
+  activeChannel = 'chat';
+  inVoiceChannel = false;
+  membersOpen = true;
+  chatOpen = false;
+  setMobilePane('main');
+  roomMembers.clear();
+  voicePeerIds.clear();
+  if (micBtn) micBtn.disabled = true;
+  setActiveChannel('chat');
   setLocalSharing(Boolean(localStream));
   setCameraLive(Boolean(cameraTrack()));
   setMicLive(micUnmuted);
@@ -5083,6 +5550,7 @@ async function enterRoom(info) {
   loadMicSettings();
   syncMicControls();
   await loadAccount();
+  renderAccountAvatar();
 }
 
 function disconnectSocket() {
@@ -5108,6 +5576,10 @@ async function returnHome(options = {}) {
   setPeopleOpen(false);
   setMicOpen(false);
   setChatOpen(false, { restoreFocus: false });
+  inVoiceChannel = false;
+  voicePeerIds.clear();
+  roomMembers.clear();
+  if (micBtn) micBtn.disabled = true;
   disconnectChat();
   disconnectWatch();
   clearChatLog();
@@ -5123,7 +5595,6 @@ async function returnHome(options = {}) {
   iAmCreator = false;
   canEditIcon = false;
   currentNameKey = '';
-  currentRoomPassword = '';
   roomKind = 'screenshare';
   canManageWatch = false;
   applyWatchState(null);
@@ -5220,54 +5691,98 @@ if (langPt) langPt.addEventListener('click', () => {
   applyUiLanguage();
 });
 
-peerStatus.addEventListener('click', (event) => {
-  event.stopPropagation();
-  setPeopleOpen(!isPopOpen(peoplePanel));
-});
+if (membersToggle) {
+  membersToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (isMobileRoom()) {
+      setMobilePane(mobilePane === 'members' ? 'main' : 'members');
+      return;
+    }
+    setMembersOpen(!membersOpen);
+  });
+}
+if (channelsToggle) {
+  channelsToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setMobilePane(mobilePane === 'channels' ? 'main' : 'channels');
+  });
+}
+if (roomScrim) {
+  roomScrim.addEventListener('click', () => {
+    if (chatOpen) setChatOpen(false);
+    setMobilePane('main');
+  });
+}
+const mobileRoomMq = window.matchMedia(MOBILE_ROOM_MQ);
+const onMobileRoomMq = () => {
+  if (!isMobileRoom()) setMobilePane('main');
+  else applySidePanel();
+};
+if (mobileRoomMq.addEventListener) mobileRoomMq.addEventListener('change', onMobileRoomMq);
+else mobileRoomMq.addListener(onMobileRoomMq);
 
-micBtn.addEventListener('click', (event) => {
-  event.stopPropagation();
-  if (micBtn.disabled) return;
-  setMicOpen(!isPopOpen(micPanel));
-});
+if (channelVoiceBtn) {
+  channelVoiceBtn.addEventListener('click', () => {
+    onVoiceChannelClick();
+  });
+}
 
-micToggle.addEventListener('click', (event) => {
-  event.stopPropagation();
-  setMicUnmuted(!micUnmuted);
-});
+if (channelChatBtn) {
+  channelChatBtn.addEventListener('click', () => {
+    setActiveChannel('chat');
+  });
+}
 
-micDevice.addEventListener('change', async () => {
-  const id = micDevice.value;
-  micSettings.deviceId = id;
-  saveMicSettings();
-  if (!micRawStream) return;
-  try {
-    await openMicDevice(id);
-  } catch (err) {
-    console.error(err);
-    showRoomError(t('mic_switch_fail'));
-  }
-});
+if (micBtn) {
+  micBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (micBtn.disabled || !inVoiceChannel) return;
+    setMicUnmuted(!micUnmuted);
+  });
+}
 
-micGainSlider.addEventListener('input', () => {
-  micSettings.gain = Number(micGainSlider.value) / 100;
-  if (micInputGain) micInputGain.gain.value = micSettings.gain;
-  saveMicSettings();
-});
+if (micToggle) {
+  micToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setMicUnmuted(!micUnmuted);
+  });
+}
 
-micVadSlider.addEventListener('input', () => {
-  micSettings.threshold = Number(micVadSlider.value) / 100;
-  saveMicSettings();
-});
+if (micDevice) {
+  micDevice.addEventListener('change', async () => {
+    const id = micDevice.value;
+    micSettings.deviceId = id;
+    saveMicSettings();
+    if (!micRawStream) return;
+    try {
+      await openMicDevice(id);
+    } catch (err) {
+      console.error(err);
+      showRoomError(t('mic_switch_fail'));
+    }
+  });
+}
 
-micPanel.addEventListener('click', (event) => event.stopPropagation());
+if (micGainSlider) {
+  micGainSlider.addEventListener('input', () => {
+    micSettings.gain = Number(micGainSlider.value) / 100;
+    if (micInputGain) micInputGain.gain.value = micSettings.gain;
+    saveMicSettings();
+  });
+}
+
+if (micVadSlider) {
+  micVadSlider.addEventListener('input', () => {
+    micSettings.threshold = Number(micVadSlider.value) / 100;
+    saveMicSettings();
+  });
+}
+
+if (micPanel) micPanel.addEventListener('click', (event) => event.stopPropagation());
 
 document.addEventListener('click', (event) => {
-  const inPeople = event.target.closest('.people-wrap');
-  const inMic = event.target.closest('.mic-wrap');
-  const inAccount = event.target.closest('.pin-user');
-  if (isPopOpen(peoplePanel) && !inPeople) setPeopleOpen(false);
-  if (isPopOpen(micPanel) && !inMic) setMicOpen(false);
+  const inPeople = event.target.closest('.member-panel, #people-list');
+  const inAccount = event.target.closest('.pin-user, .channel-user-bar, .account-menu');
   if (isPopOpen(accountMenu) && !inAccount) setAccountMenu(false);
   if (voicePeerId && !inPeople) {
     voicePeerId = null;
@@ -5292,71 +5807,39 @@ loginForm.addEventListener('submit', async (event) => {
   }
   if (homeStep === 'room') {
     const name = roomNameInput.value.trim();
-    const password = passwordInput.value;
-    if (!name || !password) {
+    if (!name) {
       loginError.textContent = t('enter_fields');
       loginError.hidden = false;
       return;
     }
-    if (homeMode === 'create') {
-      loginBtn.disabled = true;
-      try {
-        const res = await fetch('/api/rooms', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            name,
-            password,
-            permanent: Boolean(accountUser && homePermanent),
-            kind: homeKind,
-          }),
-        });
-        if (!res.ok) {
-          loginError.textContent = await readError(res, t('could_not_create'));
-          loginError.hidden = false;
-          return;
-        }
-        const info = await res.json();
-        pendingHome = { name: info.label || name, password, kind: homeKind };
-      } catch {
-        loginError.textContent = t('could_not_reach');
-        loginError.hidden = false;
-        return;
-      } finally {
-        loginBtn.disabled = false;
-      }
-    } else {
-      pendingHome = { name, password, kind: homeKind };
+    if (homeMode === 'create' && !accountUser) {
+      loginError.textContent = t('auth_required');
+      loginError.hidden = false;
+      setHomeAuth('login');
+      return;
     }
-    if (accountUser) {
+    pendingHome = {
+      name,
+      inviteCode: homeMode === 'join' ? name : '',
+      visibility: state.homeVisibility,
+      kind: homeKind,
+    };
+    if (accountUser || homeMode === 'create') {
       loginBtn.disabled = true;
-      const payload = {
-        name: pendingHome.name || roomNameInput.value,
-        password: pendingHome.password || passwordInput.value,
-      };
-      try {
-        const res = await fetch('/api/rooms/join', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          loginError.textContent = await readError(res, t('could_not_enter'));
+      const ok = await joinAccountRoom({
+        name: pendingHome.name,
+        inviteCode: pendingHome.inviteCode,
+        create: homeMode === 'create',
+        visibility: pendingHome.visibility,
+        kind: pendingHome.kind,
+        username: accountUser ? undefined : usernameInput.value.trim(),
+        onError(message) {
+          loginError.textContent = message;
           loginError.hidden = false;
-          return;
-        }
-        const info = await res.json();
-        currentRoomPassword = payload.password;
-        if (info.permanent) cachePermanentRoom(info.name || payload.name.trim(), payload.password);
-        await enterRoom(info);
-      } catch {
-        loginError.textContent = t('could_not_reach');
-        loginError.hidden = false;
-      } finally {
-        loginBtn.disabled = false;
-      }
+        },
+      });
+      loginBtn.disabled = false;
+      if (ok) return;
       return;
     }
     setHomeStep('user');
@@ -5364,34 +5847,19 @@ loginForm.addEventListener('submit', async (event) => {
     return;
   }
   loginBtn.disabled = true;
-  const payload = {
-    name: pendingHome.name || roomNameInput.value,
-    password: pendingHome.password || passwordInput.value,
-    username: usernameInput.value,
-  };
-  try {
-    const res = await fetch('/api/rooms/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      loginError.textContent = await readError(res, t('could_not_enter'));
+  const ok = await joinAccountRoom({
+    name: pendingHome.name || roomNameInput.value.trim(),
+    inviteCode: pendingHome.inviteCode || roomNameInput.value.trim(),
+    create: false,
+    kind: pendingHome.kind || homeKind,
+    username: usernameInput.value.trim(),
+    onError(message) {
+      loginError.textContent = message;
       loginError.hidden = false;
-      return;
-    }
-    const info = await res.json();
-    currentRoomPassword = payload.password;
-    if (info.permanent) cachePermanentRoom(info.name || payload.name.trim(), payload.password);
-    usernameInput.value = '';
-    await enterRoom(info);
-  } catch {
-    loginError.textContent = t('could_not_reach');
-    loginError.hidden = false;
-  } finally {
-    loginBtn.disabled = false;
-  }
+    },
+  });
+  loginBtn.disabled = false;
+  if (ok) usernameInput.value = '';
 });
 
 document.addEventListener('click', () => {
@@ -5405,7 +5873,7 @@ document.addEventListener('enterpictureinpicture', syncPipButtons);
 document.addEventListener('leavepictureinpicture', syncPipButtons);
 
 shareBtn.addEventListener('click', () => {
-  if (isWatchpartyRoom()) return;
+  if (isWatchpartyRoom() || !inVoiceChannel) return;
   if (localStream) stopShare();
   else startShare();
 });
@@ -5414,10 +5882,6 @@ if (chatBtn) {
   chatBtn.addEventListener('click', () => {
     setChatOpen(!chatOpen);
   });
-}
-
-if (chatClose) {
-  chatClose.addEventListener('click', () => setChatOpen(false));
 }
 
 if (chatLog) {
@@ -5446,7 +5910,7 @@ if (chatForm && chatInput) {
     if (!chatSocket) return;
     const body = chatInput.value.trim();
     if (!body) return;
-    chatSocket.emit('chat:send', { body });
+    chatMod.sendChat(body);
     chatInput.value = '';
     fitChatInput();
   });
@@ -5470,7 +5934,7 @@ changeBtn.addEventListener('click', () => {
 });
 
 cameraBtn.addEventListener('click', () => {
-  if (isWatchpartyRoom()) return;
+  if (isWatchpartyRoom() || !inVoiceChannel) return;
   if (cameraStream) stopCamera();
   else startCamera();
 });
@@ -5481,6 +5945,11 @@ floatBtn.addEventListener('click', () => {
 });
 
 leaveBtn.addEventListener('click', () => {
+  if (leavingVoice || inVoiceChannel || state.voiceChannelId) {
+    leaveVoiceChannel();
+    return;
+  }
+  if (Date.now() - voiceLeaveAt < 800) return;
   leaveRoom();
 });
 
@@ -5529,6 +5998,12 @@ if (accountAvatarBtn) {
   accountAvatarBtn.addEventListener('click', (event) => {
     event.stopPropagation();
     hidePinTip();
+    setAccountMenu(!isPopOpen(accountMenu));
+  });
+}
+if (userSettingsBtn) {
+  userSettingsBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
     setAccountMenu(!isPopOpen(accountMenu));
   });
 }
@@ -5611,23 +6086,31 @@ if (roomModalForm) {
     }
     if (modalStep === 'room') {
       const name = modalRoomName ? modalRoomName.value.trim() : '';
-      const password = modalRoomPassword ? modalRoomPassword.value : '';
-      if (!name || !password) {
+      if (!name) {
         setModalRoomError(t('enter_fields'));
         return;
       }
-      pendingModal = { name, password, kind: modalKind };
-      if (!accountUser) {
+      if (modalRoomMode === 'create' && !accountUser) {
+        setModalRoomError(t('auth_required'));
+        return;
+      }
+      pendingModal = {
+        name,
+        inviteCode: modalRoomMode === 'join' ? name : '',
+        visibility: state.modalVisibility,
+        kind: modalKind,
+      };
+      if (!accountUser && modalRoomMode === 'join') {
         setModalStep('user');
         return;
       }
     }
     await joinAccountRoom({
       name: pendingModal.name || (modalRoomName && modalRoomName.value.trim()) || '',
-      password: pendingModal.password || (modalRoomPassword && modalRoomPassword.value) || '',
+      inviteCode: pendingModal.inviteCode || (modalRoomName && modalRoomName.value.trim()) || '',
       username: modalUsername ? modalUsername.value.trim() : '',
       create: modalRoomMode === 'create',
-      permanent: modalPermanentOn,
+      visibility: pendingModal.visibility || state.modalVisibility,
       kind: pendingModal.kind || modalKind,
       onError: setModalRoomError,
       onBusy: (busy) => {
@@ -5740,6 +6223,11 @@ document.addEventListener('keydown', (event) => {
   if (isPopOpen(roomModal)) {
     event.preventDefault();
     setRoomModal(false);
+    return;
+  }
+  if (isMobileRoom() && mobilePane !== 'main') {
+    event.preventDefault();
+    setMobilePane('main');
   }
 });
 
@@ -5825,13 +6313,51 @@ if (paneWatch) {
   });
 }
 
+hooks.applyLayout = () => applyLayout();
+hooks.applySidePanel = () => applySidePanel();
+hooks.onChannelActivated = () => {
+  if (isMobileRoom()) setMobilePane('main');
+};
+hooks.showRoomError = (message) => showRoomError(message);
+hooks.showJoinError = (message) => showJoinError(message);
+hooks.connectVoicePeer = (member) => connectVoicePeer(member);
+hooks.closeAllPeers = () => closeAllPeers();
+hooks.startMicCapture = () => startMicCapture();
+hooks.stopMicCapture = () => stopMicCapture();
+hooks.switchChat = (channelId) => chatMod.switchChatChannel(channelId);
+hooks.renderPeople = () => renderPeopleList();
+hooks.renderVoiceRoster = () => renderVoiceRoster();
+hooks.canEditChannels = () => iAmCreator;
+hooks.onVoiceJoined = () => finishVoiceJoin();
+hooks.onVoiceLeft = () => finishVoiceLeave();
+hooks.enterRoom = (info) => enterRoom(info);
+hooks.showView = (view) => showView(view);
+hooks.setYouName = (name) => setYouName(name);
+hooks.applyRoomChrome = () => applyRoomChrome();
+hooks.setPeerStatus = () => setPeerStatus();
+hooks.refreshRemoteMedia = () => refreshRemoteMedia();
+hooks.upsertRoomMember = (item) => upsertRoomMember(item);
+hooks.removePeer = (id) => removePeer(id);
+hooks.setAccountMenu = (open) => setAccountMenu(open);
+hooks.onJoinApproved = async (request) => {
+  try {
+    const info = await homeMod.joinRoom({ inviteCode: request.inviteCode });
+    await enterRoom(info);
+  } catch {
+    showJoinError(t('could_not_enter'));
+  }
+};
+
 async function boot() {
   initLang();
   syncLangButtons();
-  guestPins = loadGuestPins();
+  guestPins = pinsMod.loadGuestPins();
   setHomeKind(homeKind);
   setHomeMode('join');
   setHomeStep('room');
+  homeMod.bindHomeChrome();
+  channelsMod.bindChannels();
+  requestsMod.bindRequests();
   prefillJoinForm();
   const invite = parseRoomInvite();
   if (invite) applyRoomInvite(invite);
@@ -5843,8 +6369,8 @@ async function boot() {
     const res = await fetch('/api/me', { credentials: 'same-origin' });
     if (res.ok) {
       const info = await res.json();
-      const sessionLabel = info.label || info.name || '';
-      if (!invite || labelsEqual(invite.label, sessionLabel)) {
+      const sessionCode = info.inviteCode || '';
+      if (!invite || !invite.inviteCode || invite.inviteCode === sessionCode) {
         await enterRoom(info);
         return;
       }
@@ -5853,8 +6379,7 @@ async function boot() {
       showView('login');
       loginError.textContent = t('room_not_found');
       loginError.hidden = false;
-      if (invite) passwordInput.focus();
-      else roomNameInput.focus();
+      roomNameInput.focus();
       return;
     }
   } catch {
@@ -5862,7 +6387,7 @@ async function boot() {
   }
   if (!invite && await resumeLastRoom()) return;
   showView('login');
-  if (invite) passwordInput.focus();
+  roomNameInput.focus();
 }
 
 boot();

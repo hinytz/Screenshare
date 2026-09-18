@@ -5,14 +5,14 @@
       if (window.screenshareDesktop) document.documentElement.classList.add('is-desktop');
     </script>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>Screenshare</title>
     <link rel="icon" href="/icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -20,6 +20,9 @@
   <body>
     <div class="app-frame">
     <aside id="pin-rail" class="pin-rail">
+      <div class="pin-brand" aria-hidden="true">
+        <img src="/icon.png" alt="" />
+      </div>
       <div id="pin-list" class="pin-list">
         <button type="button" id="pin-add-btn" class="pin-add-btn" aria-label="Join room" data-i18n-aria="join_room" aria-haspopup="dialog" aria-expanded="false" aria-controls="room-modal">
           <span class="pin-face pin-add-face">
@@ -29,14 +32,36 @@
           </span>
         </button>
       </div>
-      <div class="pin-user">
+      <div id="pin-user" class="pin-user">
         <button type="button" id="account-avatar-btn" class="account-avatar-btn bar-tip" hidden aria-label="Account" data-i18n-aria="account" aria-expanded="false" aria-controls="account-menu">
           <img id="account-avatar-img" alt="" hidden />
           <span id="account-avatar-letter"></span>
         </button>
         <div id="account-menu" class="account-menu" hidden>
+          <div id="mic-panel" class="mic-panel mic-panel-inline">
+            <button id="mic-toggle" type="button" data-i18n="unmute">Unmute</button>
+            <label class="field">
+              <span data-i18n="microphone">Microphone</span>
+              <select id="mic-device"></select>
+            </label>
+            <label class="field">
+              <span data-i18n="input_volume">Input volume</span>
+              <input id="mic-gain" type="range" min="0" max="200" value="100" />
+            </label>
+            <label class="field">
+              <span data-i18n="voice_activity">Voice activity</span>
+              <div class="vad-meter">
+                <span id="mic-level" class="vad-level"></span>
+                <input id="mic-vad" type="range" min="0" max="100" value="4" />
+              </div>
+            </label>
+          </div>
           <div class="account-menu-warn">
             <p data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
+          </div>
+          <div id="join-inbox" class="join-inbox" hidden>
+            <p class="join-inbox-title" data-i18n="join_requests">Join requests</p>
+            <ul id="join-inbox-list" class="join-inbox-list"></ul>
           </div>
           <button type="button" id="account-upload-btn">
             <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
@@ -97,111 +122,215 @@
             target="_blank"
             rel="noreferrer"
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="currentColor" d="M12 2C6.48 2 2 6.58 2 12.26c0 4.52 2.87 8.36 6.84 9.72.5.1.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.94.85.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.3.1-2.7 0 0 .84-.27 2.75 1.05A9.3 9.3 0 0 1 12 6.84c.85 0 1.71.12 2.51.35 1.9-1.32 2.74-1.05 2.74-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.64 1.03 2.76 0 3.94-2.34 4.8-4.57 5.06.36.32.68.95.68 1.92 0 1.38-.01 2.5-.01 2.84 0 .27.18.6.69.49A10.04 10.04 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"/>
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M10 20.5675C6.57143 21.7248 3.71429 20.5675 2 17"/>
+              <path d="M10 22V18.7579C10 18.1596 10.1839 17.6396 10.4804 17.1699C10.6838 16.8476 10.5445 16.3904 10.1771 16.2894C7.13394 15.4528 5 14.1077 5 9.64606C5 8.48611 5.38005 7.39556 6.04811 6.4464C6.21437 6.21018 6.29749 6.09208 6.31748 5.9851C6.33746 5.87813 6.30272 5.73852 6.23322 5.45932C5.95038 4.32292 5.96871 3.11619 6.39322 2.02823C6.39322 2.02823 7.27042 1.74242 9.26698 2.98969C9.72282 3.27447 9.95075 3.41686 10.1515 3.44871C10.3522 3.48056 10.6206 3.41384 11.1573 3.28041C11.8913 3.09795 12.6476 3 13.5 3C14.3524 3 15.1087 3.09795 15.8427 3.28041C16.3794 3.41384 16.6478 3.48056 16.8485 3.44871C17.0493 3.41686 17.2772 3.27447 17.733 2.98969C19.7296 1.74242 20.6068 2.02823 20.6068 2.02823C21.0313 3.11619 21.0496 4.32292 20.7668 5.45932C20.6973 5.73852 20.6625 5.87813 20.6825 5.9851C20.7025 6.09207 20.7856 6.21019 20.9519 6.4464C21.6199 7.39556 22 8.48611 22 9.64606C22 14.1077 19.8661 15.4528 16.8229 16.2894C16.4555 16.3904 16.3162 16.8476 16.5196 17.1699C16.8161 17.6396 17 18.1596 17 18.7579V22"/>
             </svg>
             <span>github.com/hinytz/Screenshare</span>
           </a>
-          <div class="account-toggle" role="tablist" aria-label="Account" data-i18n-aria="account">
-            <button type="button" id="mode-guest" role="tab" aria-selected="true" data-i18n="guest">Guest</button>
-            <button type="button" id="mode-login" role="tab" aria-selected="false" data-i18n="log_in">Log in</button>
-            <button type="button" id="mode-register" role="tab" aria-selected="false" data-i18n="register">Register</button>
-          </div>
-          <div id="account-form" hidden>
-            <label class="field" id="account-username-field">
-              <span data-i18n="username">Username</span>
-              <input id="account-username" name="account-username" type="text" autocomplete="username" minlength="2" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_]{1,31}" />
-              <div id="account-username-hint" class="notice-card" hidden>
-                <p data-i18n="username_hint">Letters, numbers, and underscore. 2–32 characters. Must be unique.</p>
+          <div class="home-split">
+            <div class="home-col home-col-join">
+              <div class="mode-toggle" role="tablist" aria-label="Room action" data-i18n-aria="room_action">
+                <button type="button" id="mode-join" role="tab" aria-selected="true" data-i18n="join">Join</button>
+                <button type="button" id="mode-create" role="tab" aria-selected="false" data-i18n="create">Create</button>
               </div>
-            </label>
-            <label class="field">
-              <span data-i18n="account_password">Password</span>
-              <input id="account-password" name="account-password" type="password" autocomplete="current-password" minlength="8" maxlength="200" />
-            </label>
-            <div id="turnstile-wrap" hidden>
-              <div id="turnstile-host"></div>
+              <div id="home-step-kind" hidden>
+                <p class="kind-heading" data-i18n="room_type">Room type</p>
+                <div class="kind-cards" role="listbox" aria-label="Room type" data-i18n-aria="room_type">
+                  <button type="button" class="kind-card" id="home-kind-screenshare" data-kind="screenshare" aria-selected="true">
+                    <span class="kind-card-title" data-i18n="kind_screenshare">Screenshare</span>
+                    <span class="kind-card-blurb" data-i18n="kind_screenshare_blurb">Share your screen or camera in a voice channel. You can start a watch party too.</span>
+                  </button>
+                  <button type="button" class="kind-card" id="home-kind-watchparty" data-kind="watchparty" aria-selected="false">
+                    <span class="kind-card-title" data-i18n="kind_watchparty">Watch party</span>
+                    <span class="kind-card-blurb" data-i18n="kind_watchparty_blurb">Watch YouTube, Twitch, or a video together. No screen share or camera. Chat and mic stay on.</span>
+                  </button>
+                </div>
+              </div>
+              <div id="home-step-room">
+                <label class="field">
+                  <span id="room-name-label" data-i18n="invite_code">Invite code</span>
+                  <input
+                    id="room-name"
+                    name="room"
+                    type="text"
+                    required
+                    minlength="1"
+                    maxlength="32"
+                    autocomplete="off"
+                    autofocus
+                    placeholder="JyW5XrNwb"
+                    data-i18n-placeholder="invite_placeholder"
+                  />
+                </label>
+                <div id="visibility-field" class="perm-toggle" hidden role="tablist" aria-label="Room visibility" data-i18n-aria="room_visibility">
+                  <button type="button" id="mode-public" role="tab" aria-selected="true" data-i18n="public_room">Public</button>
+                  <button type="button" id="mode-private" role="tab" aria-selected="false" data-i18n="private_room">Private</button>
+                </div>
+                <p id="join-wait" class="notice-card" hidden data-i18n="join_pending">Waiting for the owner to approve.</p>
+                <button type="button" id="home-room-back" class="home-back" hidden data-i18n="back">Back</button>
+              </div>
+              <div id="home-step-user" hidden>
+                <p id="home-room-heading" class="home-room-heading"></p>
+                <label class="field">
+                  <span data-i18n="username">Username</span>
+                  <input
+                    id="username"
+                    name="username"
+                    type="text"
+                    minlength="2"
+                    maxlength="32"
+                    autocomplete="nickname"
+                  />
+                </label>
+                <button type="button" id="home-back" class="home-back" data-i18n="back">Back</button>
+              </div>
+              <button type="submit" id="login-btn" data-i18n="continue">Enter</button>
+              <p id="login-error" class="error" hidden></p>
             </div>
-            <div id="account-ttl-warn" class="account-menu-warn" hidden>
-              <p data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
+            <div class="home-col home-col-auth">
+              <div class="account-toggle" role="tablist" aria-label="Account" data-i18n-aria="account">
+                <button type="button" id="mode-guest" role="tab" aria-selected="true" data-i18n="guest">Guest</button>
+                <button type="button" id="mode-login" role="tab" aria-selected="false" data-i18n="log_in">Log in</button>
+                <button type="button" id="mode-register" role="tab" aria-selected="false" data-i18n="register">Register</button>
+              </div>
+              <div id="account-form" hidden>
+                <label class="field" id="account-username-field">
+                  <span data-i18n="username">Username</span>
+                  <input id="account-username" name="account-username" type="text" autocomplete="username" minlength="2" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_]{1,31}" />
+                </label>
+                <label class="field">
+                  <span data-i18n="account_password">Password</span>
+                  <input id="account-password" name="account-password" type="password" autocomplete="current-password" minlength="8" maxlength="200" />
+                </label>
+                <div id="turnstile-wrap" hidden>
+                  <div id="turnstile-host"></div>
+                </div>
+                <div id="account-ttl-warn" class="account-menu-warn" hidden>
+                  <p data-i18n="account_ttl">Accounts are deleted 30 days after the last login.</p>
+                </div>
+                <button type="button" id="account-submit" data-i18n="log_in">Log in</button>
+              </div>
             </div>
-            <button type="button" id="account-submit" data-i18n="log_in">Log in</button>
           </div>
-          <div class="mode-toggle" role="tablist" aria-label="Room action" data-i18n-aria="room_action">
-            <button type="button" id="mode-join" role="tab" aria-selected="true" data-i18n="join">Join</button>
-            <button type="button" id="mode-create" role="tab" aria-selected="false" data-i18n="create">Create</button>
-          </div>
-          <div id="home-step-kind" hidden>
-            <p class="kind-heading" data-i18n="room_type">Room type</p>
-            <div class="kind-cards" role="listbox" aria-label="Room type" data-i18n-aria="room_type">
-              <button type="button" class="kind-card" id="home-kind-screenshare" data-kind="screenshare" aria-selected="true">
-                <span class="kind-card-title" data-i18n="kind_screenshare">Screenshare</span>
-                <span class="kind-card-blurb" data-i18n="kind_screenshare_blurb">Share your screen or camera with up to 5 people. You can start a watch party too.</span>
-              </button>
-              <button type="button" class="kind-card" id="home-kind-watchparty" data-kind="watchparty" aria-selected="false">
-                <span class="kind-card-title" data-i18n="kind_watchparty">Watch party</span>
-                <span class="kind-card-blurb" data-i18n="kind_watchparty_blurb">Watch YouTube, Twitch, or a video together. No screen share or camera. No join limit. Chat and mic stay on.</span>
-              </button>
-            </div>
-          </div>
-          <div id="home-step-room">
-            <label class="field">
-              <span data-i18n="room">Room</span>
-              <input
-                id="room-name"
-                name="room"
-                type="text"
-                required
-                minlength="2"
-                maxlength="37"
-                autocomplete="off"
-                autofocus
-                placeholder="room#abcd"
-                data-i18n-placeholder="room_placeholder"
-              />
-            </label>
-            <label class="field">
-              <span data-i18n="password">Password</span>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                autocomplete="current-password"
-              />
-            </label>
-            <div id="permanent-field" class="perm-toggle" hidden role="tablist" aria-label="Room duration" data-i18n-aria="room_duration">
-              <button type="button" id="mode-temporary" role="tab" aria-selected="true" data-i18n="temporary_room">Temporary</button>
-              <button type="button" id="mode-permanent" role="tab" aria-selected="false" data-i18n="permanent_room">Permanent</button>
-            </div>
-            <div id="create-ttl-warn" class="notice-card" hidden>
-              <p data-i18n="create_ttl">Rooms are deleted 5 days after the last login.</p>
-            </div>
-            <button type="button" id="home-room-back" class="home-back" hidden data-i18n="back">Back</button>
-          </div>
-          <div id="home-step-user" hidden>
-            <p id="home-room-heading" class="home-room-heading"></p>
-            <label class="field">
-              <span data-i18n="username">Username</span>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                minlength="2"
-                maxlength="32"
-                autocomplete="nickname"
-              />
-            </label>
-            <button type="button" id="home-back" class="home-back" data-i18n="back">Back</button>
-          </div>
-          <button type="submit" id="login-btn" data-i18n="continue">Enter</button>
-          <p id="login-error" class="error" hidden></p>
         </form>
       </div>
     </div>
 
-    <div id="room" class="view" hidden>
-      <div class="room-shell">
+    <div id="room" class="view" hidden data-channel="chat" data-mobile-pane="main">
+      <button type="button" id="room-scrim" class="room-scrim" hidden aria-label="Close" data-i18n-aria="close"></button>
+      <div class="room-workspace">
+      <aside class="channel-column" id="channel-column">
+        <div class="channel-stack">
+        <div class="channel-header">
+          <button
+            type="button"
+            id="room-icon-btn"
+            class="room-icon-btn bar-tip"
+            hidden
+            aria-label="Upload room icon"
+            data-i18n-aria="upload_room_icon"
+          >
+            <span class="room-icon-dash" aria-hidden="true"></span>
+            <img id="room-icon-img" alt="" hidden />
+          </button>
+          <button
+            type="button"
+            id="room-label"
+            class="room-label bar-tip"
+            hidden
+            aria-label="Copy room link"
+            data-i18n-aria="copy_room_link"
+          ></button>
+        </div>
+        <nav class="channel-list" id="channel-list" aria-label="Channels">
+          <div class="channel-category" data-type="text">
+            <div class="channel-category-head">
+              <span data-i18n="text_category">Text</span>
+              <button type="button" id="add-text-channel" class="channel-add" hidden aria-label="Add text channel" data-i18n-aria="add_text_channel">
+                <svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V20M20 12H4"/></svg>
+              </button>
+            </div>
+            <div id="text-channel-list" class="channel-category-list"></div>
+          </div>
+          <div class="channel-category" data-type="voice">
+            <div class="channel-category-head">
+              <span data-i18n="voice_category">Voice</span>
+              <button type="button" id="add-voice-channel" class="channel-add" hidden aria-label="Add voice channel" data-i18n-aria="add_voice_channel">
+                <svg class="hi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V20M20 12H4"/></svg>
+              </button>
+            </div>
+            <div id="voice-channel-list" class="channel-category-list"></div>
+          </div>
+        </nav>
+        </div>
+        <div class="channel-user-bar" id="user-bar">
+          <div class="user-bar-id">
+            <span id="user-bar-avatar-slot"></span>
+            <span id="user-bar-name" class="user-bar-name"></span>
+          </div>
+          <div class="user-bar-actions">
+            <div class="mic-wrap">
+              <button id="mic-btn" type="button" class="bar-tip" aria-label="Microphone" data-i18n-aria="microphone" aria-pressed="false" data-live="false" data-muted="true" disabled>
+                <svg class="hi icon-off" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8.1572 4.1572C8.94761 2.86349 10.373 2 12 2C14.4853 2 16.5 4.01472 16.5 6.5V11.5C16.5 11.8111 16.4684 12.1149 16.4083 12.4083M7.5 7.5V11.5C7.5 13.9853 9.51472 16 12 16C13.1154 16 14.136 15.5942 14.9222 14.9222"/>
+                  <path d="M2 2L22 22"/>
+                  <path d="M12 19H11.5828C8.07267 19 5.07706 16.4623 4.5 13M12 19H12.4172C14.2325 19 15.9102 18.3213 17.1869 17.1869M12 19V22M19.5 13C19.3878 13.6733 19.1841 14.3116 18.903 14.903"/>
+                </svg>
+                <svg class="hi icon-on" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 6.5C7 4.01472 9.01472 2 11.5 2C13.9853 2 16 4.01472 16 6.5V11.5C16 13.9853 13.9853 16 11.5 16C9.01472 16 7 13.9853 7 11.5V6.5Z"/>
+                  <path d="M11.5 19H11.0828C7.57267 19 4.57706 16.4623 4 13M11.5 19H11.9172C15.4273 19 18.4229 16.4623 19 13M11.5 19V22"/>
+                </svg>
+              </button>
+            </div>
+            <button type="button" id="user-settings-btn" class="bar-tip user-settings-btn" aria-label="Settings" data-i18n-aria="settings" aria-expanded="false" aria-controls="account-menu">
+              <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15.5 12C15.5 13.933 13.933 15.5 12 15.5C10.067 15.5 8.5 13.933 8.5 12C8.5 10.067 10.067 8.5 12 8.5C13.933 8.5 15.5 10.067 15.5 12Z"/>
+                <path d="M21.011 14.0965C21.5329 13.9558 21.7939 13.8854 21.8969 13.7508C22 13.6163 22 13.3998 22 12.9669V11.0332C22 10.6003 22 10.3838 21.8969 10.2493C21.7938 10.1147 21.5329 10.0443 21.011 9.90358C19.0606 9.37759 17.8399 7.33851 18.3433 5.40087C18.4817 4.86799 18.5509 4.60156 18.4848 4.44529C18.4187 4.28902 18.2291 4.18134 17.8497 3.96596L16.125 2.98673C15.7528 2.77539 15.5667 2.66972 15.3997 2.69222C15.2326 2.71472 15.0442 2.90273 14.6672 3.27873C13.208 4.73448 10.7936 4.73442 9.33434 3.27864C8.95743 2.90263 8.76898 2.71463 8.60193 2.69212C8.43489 2.66962 8.24877 2.77529 7.87653 2.98663L6.15184 3.96587C5.77253 4.18123 5.58287 4.28891 5.51678 4.44515C5.45068 4.6014 5.51987 4.86787 5.65825 5.4008C6.16137 7.3385 4.93972 9.37763 2.98902 9.9036C2.46712 10.0443 2.20617 10.1147 2.10308 10.2492C2 10.3838 2 10.6003 2 11.0332V12.9669C2 13.3998 2 13.6163 2.10308 13.7508C2.20615 13.8854 2.46711 13.9558 2.98902 14.0965C4.9394 14.6225 6.16008 16.6616 5.65672 18.5992C5.51829 19.1321 5.44907 19.3985 5.51516 19.5548C5.58126 19.7111 5.77092 19.8188 6.15025 20.0341L7.87495 21.0134C8.24721 21.2247 8.43334 21.3304 8.6004 21.3079C8.76746 21.2854 8.95588 21.0973 9.33271 20.7213C10.7927 19.2644 13.2088 19.2643 14.6689 20.7212C15.0457 21.0973 15.2341 21.2853 15.4012 21.3078C15.5682 21.3303 15.7544 21.2246 16.1266 21.0133L17.8513 20.034C18.2307 19.8187 18.4204 19.711 18.4864 19.5547C18.5525 19.3984 18.4833 19.132 18.3448 18.5991C17.8412 16.6616 19.0609 14.6226 21.011 14.0965Z"/>
+              </svg>
+            </button>
+            <span id="user-bar-menu-slot"></span>
+          </div>
+        </div>
+      </aside>
+      <div class="main-column">
+        <header class="main-header">
+          <button type="button" id="channels-toggle" class="channels-toggle bar-tip" aria-label="Channels" data-i18n-aria="channels_menu" aria-expanded="false" aria-controls="channel-column">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7H20"/>
+              <path d="M4 12H20"/>
+              <path d="M4 17H20"/>
+            </svg>
+          </button>
+          <h1 id="main-channel-title" class="main-channel-title" data-i18n="chat">Chat</h1>
+          <p id="room-error" class="error bar-error" hidden></p>
+          <button type="button" id="members-toggle" class="members-toggle bar-tip" aria-label="Members" data-i18n-aria="members" aria-pressed="true" aria-expanded="false" aria-controls="side-panel">
+            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12.0001" cy="8.5" r="3"/>
+              <path d="M12.0001 14.5C8.25012 14.5 6.00012 16.6429 6.00012 18.7857C6.00012 19.7325 6.67169 20.5 7.50012 20.5H16.5001C17.3285 20.5 18.0001 19.7325 18.0001 18.7857C18.0001 16.6429 15.7501 14.5 12.0001 14.5Z"/>
+            </svg>
+          </button>
+        </header>
+        <div class="main-body">
+          <section class="main-pane-chat" id="main-pane-chat">
+            <div id="chat-pane" class="chat-pane">
+              <div id="chat-log" class="chat-log"></div>
+              <form id="chat-form" class="chat-form">
+                <textarea
+                  id="chat-input"
+                  rows="1"
+                  maxlength="500"
+                  autocomplete="off"
+                  placeholder="Send a message"
+                  data-i18n-placeholder="chat_placeholder"
+                ></textarea>
+                <button type="submit" data-i18n="send">Send</button>
+              </form>
+            </div>
+          </section>
+          <section class="main-pane-voice" id="main-pane-voice" hidden>
+            <div id="voice-idle-grid" class="voice-idle-grid" hidden></div>
+            <div class="room-shell">
       <main class="stage">
         <section class="pane" id="pane-watch" hidden data-live="false" data-slot="featured">
           <header class="pane-meta">
@@ -275,75 +404,10 @@
         <video id="cam-feature" class="cam-feature" autoplay playsinline muted hidden></video>
         <div id="cam-stack" class="cam-stack"></div>
       </main>
-      <footer class="bar">
-        <div class="people-wrap">
-          <button id="peer-status" type="button" class="status bar-tip" aria-label="People" data-i18n-aria="people" aria-expanded="false" aria-controls="people-panel">
-            <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8.50012 3.70802C8.19389 3.57422 7.85567 3.5 7.50012 3.5C6.11941 3.5 5.00012 4.61929 5.00012 6C5.00012 6.8178 5.39279 7.54389 5.99988 8"/>
-              <path d="M3.37512 16.5C2.61573 16.5 2.00012 15.8588 2.00012 15.0677C2.00012 13.4585 3.66656 11.8492 6.50012 11.5402"/>
-              <path d="M15.4999 3.70753C15.8061 3.57374 16.1443 3.49951 16.4999 3.49951C17.8806 3.49951 18.9999 4.6188 18.9999 5.99951C18.9999 6.81731 18.6072 7.5434 18.0001 7.99951"/>
-              <path d="M20.6249 16.4995C21.3843 16.4995 21.9999 15.8582 21.9999 15.0672C21.9999 13.458 20.3335 11.8488 17.5001 11.5397"/>
-              <circle cx="12.0001" cy="8.5" r="3"/>
-              <path d="M12.0001 14.5C8.25012 14.5 6.00012 16.6429 6.00012 18.7857C6.00012 19.7325 6.67169 20.5 7.50012 20.5H16.5001C17.3285 20.5 18.0001 19.7325 18.0001 18.7857C18.0001 16.6429 15.7501 14.5 12.0001 14.5Z"/>
-            </svg>
-            <span id="peer-count">1 / 5</span>
-          </button>
-          <div id="people-panel" class="people-panel" hidden>
-            <p class="people-heading" data-i18n="people">People</p>
-            <ul id="people-list"></ul>
-          </div>
+            </div>
+          </section>
         </div>
-        <div class="mic-wrap">
-          <button id="mic-btn" type="button" class="bar-tip" aria-label="Microphone" data-i18n-aria="microphone" aria-expanded="false" aria-controls="mic-panel" data-live="false" data-muted="true">
-            <svg class="hi icon-off" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8.1572 4.1572C8.94761 2.86349 10.373 2 12 2C14.4853 2 16.5 4.01472 16.5 6.5V11.5C16.5 11.8111 16.4684 12.1149 16.4083 12.4083M7.5 7.5V11.5C7.5 13.9853 9.51472 16 12 16C13.1154 16 14.136 15.5942 14.9222 14.9222"/>
-              <path d="M2 2L22 22"/>
-              <path d="M12 19H11.5828C8.07267 19 5.07706 16.4623 4.5 13M12 19H12.4172C14.2325 19 15.9102 18.3213 17.1869 17.1869M12 19V22M19.5 13C19.3878 13.6733 19.1841 14.3116 18.903 14.903"/>
-            </svg>
-            <svg class="hi icon-on" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 6.5C7 4.01472 9.01472 2 11.5 2C13.9853 2 16 4.01472 16 6.5V11.5C16 13.9853 13.9853 16 11.5 16C9.01472 16 7 13.9853 7 11.5V6.5Z"/>
-              <path d="M11.5 19H11.0828C7.57267 19 4.57706 16.4623 4 13M11.5 19H11.9172C15.4273 19 18.4229 16.4623 19 13M11.5 19V22"/>
-            </svg>
-          </button>
-          <div id="mic-panel" class="mic-panel" hidden>
-            <button id="mic-toggle" type="button" data-i18n="unmute">Unmute</button>
-            <label class="field">
-              <span data-i18n="microphone">Microphone</span>
-              <select id="mic-device"></select>
-            </label>
-            <label class="field">
-              <span data-i18n="input_volume">Input volume</span>
-              <input id="mic-gain" type="range" min="0" max="200" value="100" />
-            </label>
-            <label class="field">
-              <span data-i18n="voice_activity">Voice activity</span>
-              <div class="vad-meter">
-                <span id="mic-level" class="vad-level"></span>
-                <input id="mic-vad" type="range" min="0" max="100" value="4" />
-              </div>
-            </label>
-          </div>
-        </div>
-        <button
-          type="button"
-          id="room-icon-btn"
-          class="room-icon-btn bar-tip"
-          hidden
-          aria-label="Upload room icon"
-          data-i18n-aria="upload_room_icon"
-        >
-          <span class="room-icon-dash" aria-hidden="true"></span>
-          <img id="room-icon-img" alt="" hidden />
-        </button>
-        <button
-          type="button"
-          id="room-label"
-          class="room-label bar-tip"
-          hidden
-          aria-label="Copy room link"
-          data-i18n-aria="copy_room_link"
-        ></button>
-        <p id="room-error" class="error bar-error" hidden></p>
+        <footer class="voice-action-bar bar">
         <div class="bar-actions">
           <button id="leave-btn" type="button" class="bar-tip bar-icon" aria-label="Leave" data-i18n-aria="leave">
             <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
@@ -378,9 +442,9 @@
           </button>
           <button id="watch-btn" type="button" class="bar-tip bar-icon" hidden aria-label="Watch" data-i18n-aria="watch" aria-expanded="false" aria-controls="watch-sheet">
             <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M14 21H16M14 21C13.1716 21 12.5 20.3284 12.5 19.5V17L12 17M14 21H10M10 21H8M10 21C10.8284 21 11.5 20.3284 11.5 19.5V17L12 17M12 17V21"/>
               <path d="M16 3H8C5.17157 3 3.75736 3 2.87868 3.87868C2 4.75736 2 6.17157 2 9V11C2 13.8284 2 15.2426 2.87868 16.1213C3.75736 17 5.17157 17 8 17H16C18.8284 17 20.2426 17 21.1213 16.1213C22 15.2426 22 13.8284 22 11V9C22 6.17157 22 4.75736 21.1213 3.87868C20.2426 3 18.8284 3 16 3Z"/>
-              <path d="M10 8.5V12.5L13.5 10.5L10 8.5Z"/>
-              <path d="M8 21H16M12 17V21"/>
+              <path d="M14.576 9.235L11.189 7.11812C11.0655 7.04093 10.9228 7 10.7771 7C10.3479 7 10 7.34793 10 7.77712V12.2229C10 12.6521 10.3479 13 10.7771 13C10.9228 13 11.0655 12.9591 11.189 12.8819L14.576 10.765C14.8398 10.6001 15 10.311 15 10C15 9.68896 14.8398 9.39985 14.576 9.235Z"/>
             </svg>
           </button>
           <button id="share-btn" type="button" class="bar-tip bar-icon" aria-label="Share screen" data-i18n-aria="share_screen">
@@ -399,34 +463,25 @@
               <path d="M1.99219 2L21.9922 22"/>
             </svg>
           </button>
-          <button id="chat-btn" type="button" class="bar-tip bar-icon" aria-label="Chat" data-i18n-aria="chat" aria-expanded="false" aria-controls="chat-drawer">
+          <button id="chat-btn" type="button" class="bar-tip bar-icon" aria-label="Chat" data-i18n-aria="chat" aria-expanded="false" aria-controls="voice-chat-panel">
             <svg class="hi" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M2 10.5C2 9.72921 2.01346 8.97679 2.03909 8.2503C2.12282 5.87683 2.16469 4.69009 3.13007 3.71745C4.09545 2.74481 5.3157 2.6926 7.7562 2.58819C9.09517 2.5309 10.5209 2.5 12 2.5C13.4791 2.5 14.9048 2.5309 16.2438 2.58819C18.6843 2.6926 19.9046 2.74481 20.8699 3.71745C21.8353 4.69009 21.8772 5.87683 21.9609 8.2503C21.9865 8.97679 22 9.72921 22 10.5C22 11.2708 21.9865 12.0232 21.9609 12.7497C21.8772 15.1232 21.8353 16.3099 20.8699 17.2826C19.9046 18.2552 18.6843 18.3074 16.2437 18.4118C15.5098 18.4432 14.7498 18.4667 13.9693 18.4815C13.2282 18.4955 12.8576 18.5026 12.532 18.6266C12.2064 18.7506 11.9325 18.9855 11.3845 19.4553L9.20503 21.3242C9.07273 21.4376 8.90419 21.5 8.72991 21.5C8.32679 21.5 8 21.1732 8 20.7701V18.4219C7.91842 18.4186 7.83715 18.4153 7.75619 18.4118C5.31569 18.3074 4.09545 18.2552 3.13007 17.2825C2.16469 16.3099 2.12282 15.1232 2.03909 12.7497C2.01346 12.0232 2 11.2708 2 10.5Z"/>
               <path d="M12.1257 10.5H12.0007M8.125 10.5H8M16.125 10.5H16M12.2507 10.5C12.2507 10.6381 12.1388 10.75 12.0007 10.75C11.8627 10.75 11.7507 10.6381 11.7507 10.5C11.7507 10.3619 11.8627 10.25 12.0007 10.25C12.1388 10.25 12.2507 10.3619 12.2507 10.5ZM8.25 10.5C8.25 10.6381 8.13807 10.75 8 10.75C7.86193 10.75 7.75 10.6381 7.75 10.5C7.75 10.3619 7.86193 10.25 8 10.25C8.13807 10.25 8.25 10.3619 8.25 10.5ZM16.25 10.5C16.25 10.6381 16.1381 10.75 16 10.75C15.8619 10.75 15.75 10.6381 15.75 10.5C15.75 10.3619 15.8619 10.25 16 10.25C16.1381 10.25 16.25 10.3619 16.25 10.5Z"/>
             </svg>
           </button>
         </div>
-      </footer>
+        </footer>
       </div>
-      <div id="chat-overlay" class="chat-overlay" hidden>
-        <aside id="chat-drawer" class="chat-drawer" aria-labelledby="chat-title">
-          <header class="chat-head">
-            <p id="chat-title" data-i18n="chat">Chat</p>
-            <button id="chat-close" type="button" aria-label="Close" data-i18n-aria="close">&times;</button>
-          </header>
-          <div id="chat-log" class="chat-log"></div>
-          <form id="chat-form" class="chat-form">
-            <textarea
-              id="chat-input"
-              rows="1"
-              maxlength="500"
-              autocomplete="off"
-              placeholder="Send a message"
-              data-i18n-placeholder="chat_placeholder"
-            ></textarea>
-            <button type="submit" data-i18n="send">Send</button>
-          </form>
-        </aside>
+          <aside class="side-panel" id="side-panel">
+            <div id="people-panel" class="member-panel">
+              <header class="member-head">
+                <p class="people-heading" data-i18n="members">Members</p>
+                <span id="peer-count">1</span>
+              </header>
+              <ul id="people-list"></ul>
+            </div>
+            <div id="voice-chat-panel" class="voice-chat-panel" hidden></div>
+          </aside>
       </div>
       <div id="picker" class="picker" hidden>
         <div class="picker-card">
@@ -478,30 +533,24 @@
             <div class="kind-cards" role="listbox" aria-label="Room type" data-i18n-aria="room_type">
               <button type="button" class="kind-card" id="modal-kind-screenshare" data-kind="screenshare" aria-selected="true">
                 <span class="kind-card-title" data-i18n="kind_screenshare">Screenshare</span>
-                <span class="kind-card-blurb" data-i18n="kind_screenshare_blurb">Share your screen or camera with up to 5 people. You can start a watch party too.</span>
+                <span class="kind-card-blurb" data-i18n="kind_screenshare_blurb">Share your screen or camera in a voice channel. You can start a watch party too.</span>
               </button>
               <button type="button" class="kind-card" id="modal-kind-watchparty" data-kind="watchparty" aria-selected="false">
                 <span class="kind-card-title" data-i18n="kind_watchparty">Watch party</span>
-                <span class="kind-card-blurb" data-i18n="kind_watchparty_blurb">Watch YouTube, Twitch, or a video together. No screen share or camera. No join limit. Chat and mic stay on.</span>
+                <span class="kind-card-blurb" data-i18n="kind_watchparty_blurb">Watch YouTube, Twitch, or a video together. No screen share or camera. Chat and mic stay on.</span>
               </button>
             </div>
           </div>
           <div id="modal-step-room">
             <label class="field">
-              <span data-i18n="room">Room</span>
-              <input id="modal-room-name" name="modal-room" type="text" required minlength="2" maxlength="37" autocomplete="off" />
+              <span id="modal-room-name-label" data-i18n="invite_code">Invite code</span>
+              <input id="modal-room-name" name="modal-room" type="text" required minlength="1" maxlength="32" autocomplete="off" />
             </label>
-            <label class="field">
-              <span data-i18n="password">Password</span>
-              <input id="modal-room-password" name="modal-password" type="password" required autocomplete="current-password" />
-            </label>
-            <div id="modal-permanent-field" class="perm-toggle" hidden role="tablist" aria-label="Room duration" data-i18n-aria="room_duration">
-              <button type="button" id="modal-mode-temporary" role="tab" aria-selected="true" data-i18n="temporary_room">Temporary</button>
-              <button type="button" id="modal-mode-permanent" role="tab" aria-selected="false" data-i18n="permanent_room">Permanent</button>
+            <div id="modal-visibility-field" class="perm-toggle" hidden role="tablist" aria-label="Room visibility" data-i18n-aria="room_visibility">
+              <button type="button" id="modal-mode-public" role="tab" aria-selected="true" data-i18n="public_room">Public</button>
+              <button type="button" id="modal-mode-private" role="tab" aria-selected="false" data-i18n="private_room">Private</button>
             </div>
-            <div id="modal-create-ttl" class="notice-card" hidden>
-              <p data-i18n="create_ttl">Rooms are deleted 5 days after the last login.</p>
-            </div>
+            <p id="modal-join-wait" class="notice-card" hidden data-i18n="join_pending">Waiting for the owner to approve.</p>
           </div>
           <div id="modal-step-user" hidden>
             <label class="field">
@@ -540,6 +589,18 @@
         </form>
       </div>
     </div>
+    <div id="channel-delete-modal" class="room-modal" hidden role="dialog" aria-modal="true" aria-labelledby="channel-delete-title" aria-describedby="channel-delete-body">
+      <div class="room-modal-card confirm-modal-card">
+        <header class="room-modal-head">
+          <p id="channel-delete-title" class="wordmark" data-i18n="delete_channel">Delete channel</p>
+        </header>
+        <p id="channel-delete-body" class="confirm-modal-body"></p>
+        <div class="confirm-modal-actions">
+          <button type="button" id="channel-delete-cancel" data-i18n="cancel">Cancel</button>
+          <button type="button" id="channel-delete-ok" class="danger" data-i18n="delete_channel">Delete channel</button>
+        </div>
+      </div>
+    </div>
     <input id="image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
     <div id="pin-tip" class="pin-tip" hidden>
       <span class="pin-tip-mark" aria-hidden="true">
@@ -566,7 +627,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script type="importmap">{"imports":{"./i18n.js":"/i18n.js"}}</script>
+    <script type="importmap">{"imports":{"./i18n.js":"/i18n.js","./js/dom.js":"/js/dom.js","./js/state.js":"/js/state.js","./js/api.js":"/js/api.js","./js/home.js":"/js/home.js","./js/account.js":"/js/account.js","./js/pins.js":"/js/pins.js","./js/channels.js":"/js/channels.js","./js/chat.js":"/js/chat.js","./js/webrtc.js":"/js/webrtc.js","./js/watch.js":"/js/watch.js","./js/requests.js":"/js/requests.js"}}</script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

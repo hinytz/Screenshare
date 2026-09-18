@@ -8,6 +8,10 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const { Server } = require('socket.io');
 const Database = require('better-sqlite3');
+const ids = require('./ids');
+const { applySchema } = require('./lib/schema');
+const roomsLib = require('./lib/rooms');
+const channelsLib = require('./lib/channels');
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env');
@@ -39,16 +43,12 @@ const STREAM_GRACE_MS = 20 * 1000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const TURNSTILE_SITE_KEY = String(process.env.TURNSTILE_SITE_KEY || '').trim();
 const TURNSTILE_SECRET_KEY = String(process.env.TURNSTILE_SECRET_KEY || '').trim();
-const MAX_MEMBERS = 5;
-const MAX_WATCHPARTY_MEMBERS = 200;
-const ROOM_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 const ACCOUNT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_MS = 5 * 60 * 1000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _\-]{0,30}[A-Za-z0-9]$|^[A-Za-z0-9][A-Za-z0-9_]{1,31}$/;
 const ACCOUNT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_]{1,31}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const TAG_RE = /^[a-z]{4}$/;
-const TAG_CHARS = 'abcdefghijklmnopqrstuvwxyz';
+const CHANNEL_NAME_RE = NAME_RE;
 const CHAT_KEEP = 50;
 const CHAT_MAX_LEN = 500;
 const CHAT_RATE_MS = 250;
@@ -80,17 +80,6 @@ function getIceServers() {
   }
 }
 
-function hashSecret(value) {
-  return crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex');
-}
-
-function hashesMatch(input, storedHex) {
-  if (!storedHex) return false;
-  const a = Buffer.from(hashSecret(input), 'hex');
-  const b = Buffer.from(String(storedHex), 'hex');
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
 function readSession(req) {
   return (req.signedCookies && req.signedCookies.session) || null;
 }
@@ -103,47 +92,12 @@ function keyOf(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
-function randomTag() {
-  const bytes = crypto.randomBytes(4);
-  let tag = '';
-  for (let i = 0; i < 4; i++) tag += TAG_CHARS[bytes[i] % TAG_CHARS.length];
-  return tag;
-}
-
 function parseRoomName(value) {
-  const raw = String(value ?? '').trim().replace(/\s+/g, ' ');
-  if (!raw) return null;
-  const hash = raw.lastIndexOf('#');
-  let namePart = raw;
-  let tag = '';
-  if (hash !== -1) {
-    namePart = raw.slice(0, hash).trim();
-    tag = keyOf(raw.slice(hash + 1));
-  }
-  if (namePart.length < 2 || namePart.length > 32 || !NAME_RE.test(namePart)) return null;
-  if (tag && !TAG_RE.test(tag)) return null;
-  const nameKey = keyOf(namePart);
-  return {
-    display: namePart,
-    nameKey,
-    tag,
-    key: tag ? `${nameKey}#${tag}` : nameKey,
-  };
-}
-
-function roomBaseName(room) {
-  const tag = String(room.tag || '');
-  let name = String(room.display_name || '');
-  if (tag && name.toLowerCase().endsWith(`#${tag}`)) {
-    name = name.slice(0, -(tag.length + 1));
-  }
-  return name;
+  return roomsLib.parseRoomName(value, NAME_RE);
 }
 
 function roomLabel(room) {
-  const name = roomBaseName(room);
-  const tag = room.permanent ? '' : String(room.tag || '');
-  return tag ? `${name}#${tag}` : name;
+  return String((room && room.display_name) || '');
 }
 
 function parseUsername(value) {
@@ -168,6 +122,19 @@ function parsePassword(value) {
   const password = String(value ?? '');
   if (password.length < 8 || password.length > 200) return null;
   return password;
+}
+
+function httpError(status, message, code) {
+  const err = new Error(message);
+  err.status = status;
+  if (code) err.code = code;
+  return err;
+}
+
+function parseRoomKind(value) {
+  const kind = String(value || 'screenshare').trim().toLowerCase();
+  if (kind === 'watchparty' || kind === 'screenshare') return kind;
+  throw httpError(400, 'Invalid room type.', 'room_kind_bad');
 }
 
 function hashPassword(password) {
@@ -244,295 +211,73 @@ fs.mkdirSync(path.join(uploadsDir, 'rooms'), { recursive: true });
 const db = new Database(path.join(dataDir, 'rooms.sqlite'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS rooms (
-    name_key TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    permanent INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS room_members (
-    session_token TEXT PRIMARY KEY,
-    name_key TEXT NOT NULL,
-    peer_id TEXT NOT NULL,
-    username TEXT NOT NULL,
-    username_key TEXT NOT NULL,
-    joined_at INTEGER NOT NULL,
-    FOREIGN KEY (name_key) REFERENCES rooms(name_key)
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS room_members_name ON room_members (name_key, username_key);
-  CREATE TABLE IF NOT EXISTS room_sessions (
-    session_token TEXT PRIMARY KEY,
-    name_key TEXT NOT NULL,
-    username TEXT NOT NULL,
-    username_key TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (name_key) REFERENCES rooms(name_key)
-  );
-  CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name_key TEXT NOT NULL,
-    peer_id TEXT NOT NULL,
-    username TEXT NOT NULL,
-    username_key TEXT NOT NULL,
-    body TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (name_key) REFERENCES rooms(name_key)
-  );
-  CREATE INDEX IF NOT EXISTS chat_messages_room_id ON chat_messages (name_key, id);
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE,
-    password_hash TEXT,
-    username TEXT NOT NULL,
-    username_key TEXT NOT NULL UNIQUE,
-    avatar_path TEXT,
-    created_at INTEGER NOT NULL,
-    last_login_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS user_oauth (
-    user_id INTEGER NOT NULL,
-    provider TEXT NOT NULL,
-    provider_user_id TEXT NOT NULL,
-    PRIMARY KEY (provider, provider_user_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS room_memberships (
-    user_id INTEGER NOT NULL,
-    name_key TEXT NOT NULL,
-    pinned INTEGER NOT NULL DEFAULT 1,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, name_key),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (name_key) REFERENCES rooms(name_key) ON DELETE CASCADE
-  );
-`);
+applySchema(db);
 
-function ensureColumn(table, column, ddl) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (cols.some((col) => col.name === column)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-}
-
-ensureColumn('rooms', 'tag', "tag TEXT NOT NULL DEFAULT ''");
-ensureColumn('rooms', 'last_join_at', 'last_join_at INTEGER');
-ensureColumn('rooms', 'creator_username_key', "creator_username_key TEXT NOT NULL DEFAULT ''");
-ensureColumn('rooms', 'owner_user_id', 'owner_user_id INTEGER');
-ensureColumn('rooms', 'icon_path', 'icon_path TEXT');
-ensureColumn('room_members', 'user_id', 'user_id INTEGER');
-ensureColumn('room_sessions', 'user_id', 'user_id INTEGER');
-ensureColumn('room_sessions', 'peer_id', "peer_id TEXT NOT NULL DEFAULT ''");
-ensureColumn('rooms', 'kind', "kind TEXT NOT NULL DEFAULT 'screenshare'");
-db.prepare('UPDATE rooms SET last_join_at = created_at WHERE last_join_at IS NULL').run();
-db.exec(`
-  CREATE TABLE IF NOT EXISTS watch_parties (
-    name_key TEXT PRIMARY KEY,
-    source_type TEXT NOT NULL,
-    source_url TEXT NOT NULL,
-    video_id TEXT NOT NULL DEFAULT '',
-    host_peer_id TEXT NOT NULL DEFAULT '',
-    host_user_id INTEGER,
-    host_username_key TEXT NOT NULL DEFAULT '',
-    paused INTEGER NOT NULL DEFAULT 1,
-    media_time REAL NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (name_key) REFERENCES rooms(name_key) ON DELETE CASCADE
-  );
-`);
-
-const stmtInsertRoom = db.prepare(`
-  INSERT INTO rooms (name_key, display_name, password_hash, permanent, created_at, tag, last_join_at, creator_username_key, owner_user_id, icon_path, kind)
-  VALUES (@name_key, @display_name, @password_hash, @permanent, @created_at, @tag, @last_join_at, @creator_username_key, @owner_user_id, @icon_path, @kind)
-`);
-const stmtUpsertPermanent = db.prepare(`
-  INSERT INTO rooms (name_key, display_name, password_hash, permanent, created_at, tag, last_join_at, creator_username_key, owner_user_id)
-  VALUES (@name_key, @display_name, @password_hash, 1, @created_at, '', @created_at, '', NULL)
-  ON CONFLICT(name_key) DO UPDATE SET
-    display_name = excluded.display_name,
-    password_hash = excluded.password_hash,
-    permanent = 1,
-    tag = ''
-`);
-const stmtTouchRoom = db.prepare('UPDATE rooms SET last_join_at = ? WHERE name_key = ?');
-const stmtClaimCreator = db.prepare(`
-  UPDATE rooms SET creator_username_key = ?
-  WHERE name_key = ? AND permanent = 0 AND creator_username_key = ''
-`);
-const stmtClaimPermanentOwner = db.prepare(`
-  UPDATE rooms SET owner_user_id = ?
-  WHERE name_key = ? AND permanent = 1 AND owner_user_id IS NULL
-`);
-const stmtExpiredRooms = db.prepare(`
-  SELECT name_key FROM rooms WHERE permanent = 0 AND last_join_at IS NOT NULL AND last_join_at < ?
-`);
-const stmtDeleteSessionsInRoom = db.prepare('DELETE FROM room_sessions WHERE name_key = ?');
-const stmtGetMemberByPeer = db.prepare(
-  'SELECT * FROM room_members WHERE name_key = ? AND peer_id = ? LIMIT 1'
-);
-const stmtGetRoom = db.prepare('SELECT * FROM rooms WHERE name_key = ?');
-const stmtDeleteRoom = db.prepare('DELETE FROM rooms WHERE name_key = ?');
-const stmtInsertMember = db.prepare(`
-  INSERT INTO room_members (session_token, name_key, peer_id, username, username_key, joined_at, user_id)
-  VALUES (@session_token, @name_key, @peer_id, @username, @username_key, @joined_at, @user_id)
-`);
-const stmtGetMember = db.prepare('SELECT * FROM room_members WHERE session_token = ?');
-const stmtMembersInRoom = db.prepare('SELECT * FROM room_members WHERE name_key = ?');
-const stmtMemberCount = db.prepare('SELECT COUNT(*) AS n FROM room_members WHERE name_key = ?');
-const stmtUsernameTaken = db.prepare(
-  'SELECT 1 AS ok FROM room_members WHERE name_key = ? AND username_key = ? LIMIT 1'
-);
-const stmtDeleteMember = db.prepare('DELETE FROM room_members WHERE session_token = ?');
-const stmtDeleteMembersInRoom = db.prepare('DELETE FROM room_members WHERE name_key = ?');
-const stmtGetSession = db.prepare('SELECT * FROM room_sessions WHERE session_token = ?');
-const stmtUpsertSession = db.prepare(`
-  INSERT INTO room_sessions (session_token, name_key, username, username_key, created_at, user_id, peer_id)
-  VALUES (@session_token, @name_key, @username, @username_key, @created_at, @user_id, @peer_id)
-  ON CONFLICT(session_token) DO UPDATE SET
-    name_key = excluded.name_key,
-    username = excluded.username,
-    username_key = excluded.username_key,
-    user_id = excluded.user_id,
-    peer_id = excluded.peer_id
-`);
-const stmtDeleteSession = db.prepare('DELETE FROM room_sessions WHERE session_token = ?');
-const stmtInsertChat = db.prepare(`
-  INSERT INTO chat_messages (name_key, peer_id, username, username_key, body, created_at)
-  VALUES (@name_key, @peer_id, @username, @username_key, @body, @created_at)
-`);
-const stmtPruneChat = db.prepare(`
-  DELETE FROM chat_messages
-  WHERE name_key = ?
-    AND id NOT IN (
-      SELECT id FROM (
-        SELECT id FROM chat_messages WHERE name_key = ? ORDER BY id DESC LIMIT ${CHAT_KEEP}
-      )
-    )
-`);
-const stmtChatHistory = db.prepare(`
-  SELECT id, peer_id AS peerId, username, username_key AS usernameKey, body, created_at AS createdAt
-  FROM (
-    SELECT id, peer_id, username, username_key, body, created_at
-    FROM chat_messages
-    WHERE name_key = ?
-    ORDER BY id DESC
-    LIMIT ${CHAT_KEEP}
-  )
-  ORDER BY id ASC
-`);
-const stmtGetChat = db.prepare('SELECT * FROM chat_messages WHERE id = ? AND name_key = ?');
-const stmtDeleteChat = db.prepare('DELETE FROM chat_messages WHERE id = ? AND name_key = ?');
-const stmtDeleteChatInRoom = db.prepare('DELETE FROM chat_messages WHERE name_key = ?');
-const stmtInsertUser = db.prepare(`
-  INSERT INTO users (email, password_hash, username, username_key, avatar_path, created_at, last_login_at)
-  VALUES (@email, @password_hash, @username, @username_key, NULL, @created_at, @last_login_at)
-`);
-const stmtGetUser = db.prepare('SELECT * FROM users WHERE id = ?');
-const stmtGetUserByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
-const stmtGetUserByUsername = db.prepare('SELECT * FROM users WHERE username_key = ?');
-const stmtTouchUser = db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?');
-const stmtSetUserAvatar = db.prepare('UPDATE users SET avatar_path = ? WHERE id = ?');
-const stmtExpiredUsers = db.prepare('SELECT id FROM users WHERE last_login_at IS NOT NULL AND last_login_at < ?');
-const stmtDeleteUser = db.prepare('DELETE FROM users WHERE id = ?');
-const stmtDeleteOAuthForUser = db.prepare('DELETE FROM user_oauth WHERE user_id = ?');
-const stmtRoomsByOwner = db.prepare('SELECT name_key FROM rooms WHERE owner_user_id = ?');
-const stmtMembersByUser = db.prepare('SELECT session_token FROM room_members WHERE user_id = ?');
-const stmtSetRoomIcon = db.prepare('UPDATE rooms SET icon_path = ? WHERE name_key = ?');
-const stmtUpsertMembership = db.prepare(`
-  INSERT INTO room_memberships (user_id, name_key, pinned, created_at)
-  VALUES (@user_id, @name_key, 1, @created_at)
-  ON CONFLICT(user_id, name_key) DO UPDATE SET pinned = 1
-`);
-const stmtGetMembership = db.prepare(
-  'SELECT * FROM room_memberships WHERE user_id = ? AND name_key = ?'
-);
-const stmtDeleteMembership = db.prepare(
-  'DELETE FROM room_memberships WHERE user_id = ? AND name_key = ?'
-);
-const stmtDeleteMembershipsForUser = db.prepare('DELETE FROM room_memberships WHERE user_id = ?');
-const stmtDeleteMembershipsInRoom = db.prepare('DELETE FROM room_memberships WHERE name_key = ?');
-const stmtListPins = db.prepare(`
-  SELECT m.name_key, r.display_name, r.tag, r.permanent, r.icon_path, r.owner_user_id
-  FROM room_memberships m
-  JOIN rooms r ON r.name_key = m.name_key
-  WHERE m.user_id = ? AND m.pinned = 1
-  ORDER BY m.created_at ASC
-`);
-const stmtGetWatch = db.prepare('SELECT * FROM watch_parties WHERE name_key = ?');
-const stmtUpsertWatch = db.prepare(`
-  INSERT INTO watch_parties (
-    name_key, source_type, source_url, video_id, host_peer_id, host_user_id,
-    host_username_key, paused, media_time, updated_at
-  ) VALUES (
-    @name_key, @source_type, @source_url, @video_id, @host_peer_id, @host_user_id,
-    @host_username_key, @paused, @media_time, @updated_at
-  )
-  ON CONFLICT(name_key) DO UPDATE SET
-    source_type = excluded.source_type,
-    source_url = excluded.source_url,
-    video_id = excluded.video_id,
-    host_peer_id = excluded.host_peer_id,
-    host_user_id = excluded.host_user_id,
-    host_username_key = excluded.host_username_key,
-    paused = excluded.paused,
-    media_time = excluded.media_time,
-    updated_at = excluded.updated_at
-`);
-const stmtUpdateWatchPlayback = db.prepare(`
-  UPDATE watch_parties
-  SET paused = @paused, media_time = @media_time, updated_at = @updated_at
-  WHERE name_key = @name_key
-`);
-const stmtUpdateWatchHost = db.prepare(`
-  UPDATE watch_parties
-  SET host_peer_id = @host_peer_id, host_user_id = @host_user_id,
-      host_username_key = @host_username_key, updated_at = @updated_at
-  WHERE name_key = @name_key
-`);
-const stmtDeleteWatch = db.prepare('DELETE FROM watch_parties WHERE name_key = ?');
-
-const addChatTx = db.transaction((row) => {
-  const info = stmtInsertChat.run(row);
-  stmtPruneChat.run(row.name_key, row.name_key);
-  return Number(info.lastInsertRowid);
+const publicFileNames = fs.readdirSync(path.join(__dirname, 'public'));
+const store = require('./lib/store').createStore(db, {
+  httpError,
+  nameRe: NAME_RE,
+  parseRoomKind,
+  publicFileNames,
+  chatKeep: CHAT_KEEP,
 });
-
-function seedPermanentRooms() {
-  const raw = process.env.PERMANENT_ROOMS;
-  if (!raw) return;
-  let list;
-  try {
-    list = JSON.parse(raw);
-  } catch (err) {
-    console.warn('Invalid PERMANENT_ROOMS JSON:', err.message);
-    return;
-  }
-  if (!Array.isArray(list)) {
-    console.warn('PERMANENT_ROOMS must be a JSON array');
-    return;
-  }
-  const now = Date.now();
-  for (const item of list) {
-    const parsed = parseRoomName(item && item.name);
-    const password = item && item.password;
-    if (!parsed || !password) {
-      console.warn('Skipping invalid permanent room entry');
-      continue;
-    }
-    stmtUpsertPermanent.run({
-      name_key: parsed.nameKey,
-      display_name: parsed.display,
-      password_hash: hashSecret(password),
-      created_at: now,
-    });
-  }
-}
-
-seedPermanentRooms();
+const {
+  rooms: roomsApi,
+  channels: channelsApi,
+  stmtTouchRoom,
+  stmtExpiredRooms,
+  stmtDeleteSessionsInRoom,
+  stmtGetMemberByPeer,
+  stmtDeleteRoom,
+  stmtInsertMember,
+  stmtGetMember,
+  stmtMembersInRoom,
+  stmtMemberCount,
+  stmtUsernameTaken,
+  stmtDeleteMember,
+  stmtDeleteMembersInRoom,
+  stmtGetSession,
+  stmtUpsertSession,
+  stmtDeleteSession,
+  stmtChatHistory,
+  stmtGetChat,
+  stmtDeleteChat,
+  stmtDeleteChatInRoom,
+  stmtDeleteChatInChannel,
+  stmtDeleteChannelsInRoom,
+  stmtDeleteRequestsInRoom,
+  stmtInsertUser,
+  stmtGetUser,
+  stmtGetUserByEmail,
+  stmtGetUserByUsername,
+  stmtTouchUser,
+  stmtSetUserAvatar,
+  stmtExpiredUsers,
+  stmtDeleteUser,
+  stmtDeleteOAuthForUser,
+  stmtRoomsByOwner,
+  stmtMembersByUser,
+  stmtSetRoomIcon,
+  stmtGetMembership,
+  stmtDeleteMembership,
+  stmtDeleteMembershipsForUser,
+  stmtDeleteMembershipsInRoom,
+  stmtListPins,
+  stmtGetWatch,
+  stmtUpsertWatch,
+  stmtUpdateWatchPlayback,
+  stmtUpdateWatchHost,
+  stmtDeleteWatch,
+  addChatTx,
+  stmtGetRoom,
+  stmtGetRoomByInvite,
+  stmtUpsertMembership,
+} = store;
 
 const sockets = new Map();
 const chatSockets = new Map();
 const watchSockets = new Map();
+const voiceByToken = new Map();
 let watchIo = null;
 
 function touchRoom(nameKey) {
@@ -549,13 +294,14 @@ function unlinkQuiet(filePath) {
   }
 }
 
-function roomIconRelPath(nameKey) {
-  const id = crypto.createHash('sha256').update(String(nameKey)).digest('hex').slice(0, 32);
+function roomIconRelPath(roomId) {
+  const id = crypto.createHash('sha256').update(String(roomId)).digest('hex').slice(0, 32);
   return path.posix.join('rooms', `${id}.webp`);
 }
 
 function avatarRelPath(userId) {
-  return path.posix.join('avatars', `${Number(userId)}.webp`);
+  const safe = String(userId || '').replace(/[^0-9]/g, '').slice(0, 32) || 'user';
+  return path.posix.join('avatars', `${safe}.webp`);
 }
 
 function saveWebpUpload(buf, relPath) {
@@ -596,38 +342,42 @@ function sendUpload(res, relPath) {
   return true;
 }
 
-function deleteEphemeralRoom(nameKey) {
-  const room = stmtGetRoom.get(nameKey);
-  if (!room || room.permanent) return;
-  if (stmtMemberCount.get(nameKey).n > 0) return;
+function deleteOrphanRoom(roomId) {
+  const room = stmtGetRoom.get(roomId);
+  if (!room || room.owner_user_id) return;
+  if (stmtMemberCount.get(roomId).n > 0) return;
   if (room.icon_path) unlinkQuiet(path.join(uploadsDir, room.icon_path));
-  stmtDeleteMembershipsInRoom.run(nameKey);
-  stmtDeleteMembersInRoom.run(nameKey);
-  stmtDeleteSessionsInRoom.run(nameKey);
-  stmtDeleteWatch.run(nameKey);
-  stmtDeleteChatInRoom.run(nameKey);
-  stmtDeleteRoom.run(nameKey);
+  stmtDeleteRequestsInRoom.run(roomId);
+  stmtDeleteMembershipsInRoom.run(roomId);
+  stmtDeleteMembersInRoom.run(roomId);
+  stmtDeleteSessionsInRoom.run(roomId);
+  stmtDeleteWatch.run(roomId);
+  stmtDeleteChatInRoom.run(roomId);
+  stmtDeleteChannelsInRoom.run(roomId);
+  stmtDeleteRoom.run(roomId);
 }
 
-function evictRoom(nameKey) {
-  for (const row of stmtMembersInRoom.all(nameKey)) {
+function evictRoom(roomId) {
+  for (const row of stmtMembersInRoom.all(roomId)) {
     const sock = findSocketByToken(row.session_token);
     if (sock) send(sock, { type: 'kicked' });
     removeMember(row.session_token, true, true);
   }
 }
 
-function deleteRoomFully(nameKey) {
-  const room = stmtGetRoom.get(nameKey);
+function deleteRoomFully(roomId) {
+  const room = stmtGetRoom.get(roomId);
   if (!room) return;
-  evictRoom(nameKey);
+  evictRoom(roomId);
   if (room.icon_path) unlinkQuiet(path.join(uploadsDir, room.icon_path));
-  stmtDeleteMembershipsInRoom.run(nameKey);
-  stmtDeleteMembersInRoom.run(nameKey);
-  stmtDeleteSessionsInRoom.run(nameKey);
-  stmtDeleteWatch.run(nameKey);
-  stmtDeleteChatInRoom.run(nameKey);
-  stmtDeleteRoom.run(nameKey);
+  stmtDeleteRequestsInRoom.run(roomId);
+  stmtDeleteMembershipsInRoom.run(roomId);
+  stmtDeleteMembersInRoom.run(roomId);
+  stmtDeleteSessionsInRoom.run(roomId);
+  stmtDeleteWatch.run(roomId);
+  stmtDeleteChatInRoom.run(roomId);
+  stmtDeleteChannelsInRoom.run(roomId);
+  stmtDeleteRoom.run(roomId);
 }
 
 function deleteUserAccount(userId) {
@@ -637,7 +387,7 @@ function deleteUserAccount(userId) {
     removeMember(row.session_token, true, true);
   }
   for (const row of stmtRoomsByOwner.all(userId)) {
-    deleteRoomFully(row.name_key);
+    deleteRoomFully(row.id);
   }
   if (user.avatar_path) unlinkQuiet(path.join(uploadsDir, user.avatar_path));
   stmtDeleteMembershipsForUser.run(userId);
@@ -653,14 +403,26 @@ function sweepExpiredAccounts() {
 }
 
 function sweepExpiredRooms() {
-  const cutoff = Date.now() - ROOM_TTL_MS;
+  const cutoff = Date.now() - ACCOUNT_TTL_MS;
   for (const row of stmtExpiredRooms.all(cutoff)) {
-    deleteEphemeralRoom(row.name_key);
+    deleteOrphanRoom(row.id);
   }
 }
 
-function roomSockets(nameKey) {
-  return [...sockets.values()].filter((client) => client.nameKey === nameKey);
+function roomSockets(roomId) {
+  return [...sockets.values()].filter((client) => String(client.roomId) === String(roomId));
+}
+
+function socketsForUser(userId) {
+  if (!userId) return [];
+  return [...sockets.values()].filter((client) => {
+    const member = stmtGetMember.get(client.token);
+    return member && String(member.user_id) === String(userId);
+  });
+}
+
+function notifyUser(userId, payload) {
+  for (const client of socketsForUser(userId)) send(client, payload);
 }
 
 function send(client, payload) {
@@ -679,8 +441,8 @@ function findSocketByToken(token) {
   return sockets.get(token) || null;
 }
 
-function findSocketById(id, nameKey) {
-  return roomSockets(nameKey).find((client) => client.id === id) || null;
+function findSocketById(id, roomId) {
+  return roomSockets(roomId).find((client) => client.id === id) || null;
 }
 
 function setSessionCookie(res, req, token) {
@@ -751,9 +513,8 @@ function clearAccountCookie(res, req) {
 
 function readAccountUser(req) {
   const raw = req.signedCookies && req.signedCookies.account;
-  const id = Number(raw);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  return stmtGetUser.get(id) || null;
+  if (!ids.isSnowflake(raw)) return null;
+  return stmtGetUser.get(String(raw)) || null;
 }
 
 function touchAccount(userId) {
@@ -764,7 +525,7 @@ function touchAccount(userId) {
 function rememberSession(token, room, username, userId, peerId) {
   stmtUpsertSession.run({
     session_token: token,
-    name_key: room.name_key,
+    room_id: room.id,
     username: username.display,
     username_key: username.key,
     created_at: Date.now(),
@@ -776,7 +537,7 @@ function rememberSession(token, room, username, userId, peerId) {
 function restoreMember(token) {
   const session = stmtGetSession.get(token);
   if (!session) return null;
-  const room = stmtGetRoom.get(session.name_key);
+  const room = stmtGetRoom.get(session.room_id);
   if (!room) {
     stmtDeleteMember.run(token);
     stmtDeleteSession.run(token);
@@ -784,12 +545,11 @@ function restoreMember(token) {
   }
   const existing = stmtGetMember.get(token);
   if (existing) return { member: existing, room };
-  if (stmtMemberCount.get(room.name_key).n >= roomMemberCap(room)) return null;
-  if (stmtUsernameTaken.get(room.name_key, session.username_key)) return null;
-  const peerId = session.peer_id || crypto.randomBytes(8).toString('hex');
+  if (stmtUsernameTaken.get(room.id, session.username_key)) return null;
+  const peerId = session.peer_id || ids.nextSnowflake();
   const member = {
     session_token: token,
-    name_key: room.name_key,
+    room_id: room.id,
     peer_id: peerId,
     username: session.username,
     username_key: session.username_key,
@@ -804,8 +564,7 @@ function restoreMember(token) {
   if (!session.peer_id) {
     rememberSession(token, room, { display: session.username, key: session.username_key }, session.user_id, peerId);
   }
-  room = claimPermanentOwner(room, session.user_id);
-  touchRoom(room.name_key);
+  touchRoom(room.id);
   return { member, room };
 }
 
@@ -829,29 +588,40 @@ function scheduleMemberGrace(token) {
   memberGrace.set(token, timer);
 }
 
+function memberVoiceChannel(token) {
+  return voiceByToken.get(token) || null;
+}
+
+function memberInVoice(token) {
+  return Boolean(memberVoiceChannel(token));
+}
+
 function removeMember(token, announce, logout) {
   cancelMemberGrace(token);
+  const leftChannelId = memberVoiceChannel(token);
+  voiceByToken.delete(token);
   const member = stmtGetMember.get(token);
   closeSocket(token);
   if (member) {
     stmtDeleteMember.run(token);
     if (announce) {
-      broadcastRoom(member.name_key, { type: 'peer-left', id: member.peer_id }, token);
+      if (leftChannelId) {
+        broadcastRoom(member.room_id, {
+          type: 'voice-left',
+          id: member.peer_id,
+          channelId: leftChannelId,
+          inVoice: false,
+        }, token);
+      }
+      broadcastRoom(member.room_id, { type: 'peer-left', id: member.peer_id }, token);
     }
-    const room = stmtGetRoom.get(member.name_key);
+    const room = stmtGetRoom.get(member.room_id);
     if (room) {
       const nextWatch = fallbackWatchHost(room, member.peer_id);
-      if (nextWatch) broadcastWatch(room.name_key, { action: 'host' });
+      if (nextWatch) broadcastWatch(room.id, { action: 'host' });
     }
   }
   if (logout) stmtDeleteSession.run(token);
-}
-
-function httpError(status, message, code) {
-  const err = new Error(message);
-  err.status = status;
-  if (code) err.code = code;
-  return err;
 }
 
 function sendError(res, err, fallback, fallbackCode) {
@@ -882,31 +652,14 @@ async function verifyTurnstile(token, ip) {
   return Boolean(data && data.success);
 }
 
-function claimPermanentOwner(room, userId) {
-  if (!room || !room.permanent || !userId || room.owner_user_id) return room;
-  stmtClaimPermanentOwner.run(userId, room.name_key);
-  return stmtGetRoom.get(room.name_key) || room;
-}
-
 function roomKindOf(room) {
   return room && room.kind === 'watchparty' ? 'watchparty' : 'screenshare';
 }
 
-function roomMemberCap(room) {
-  return roomKindOf(room) === 'watchparty' ? MAX_WATCHPARTY_MEMBERS : MAX_MEMBERS;
-}
-
-function parseRoomKind(value) {
-  const kind = String(value || 'screenshare').trim().toLowerCase();
-  if (kind === 'watchparty' || kind === 'screenshare') return kind;
-  throw httpError(400, 'Invalid room type.', 'room_kind_bad');
-}
-
 function isCreator(room, member, user) {
   if (!room || !member) return false;
-  if (user && room.owner_user_id && Number(room.owner_user_id) === Number(user.id)) return true;
-  if (room.permanent) return false;
-  return Boolean(room.creator_username_key && room.creator_username_key === member.username_key);
+  if (user && roomsApi.isOwner(room, user)) return true;
+  return Boolean(room.owner_user_id && member.user_id && String(room.owner_user_id) === String(member.user_id));
 }
 
 function isHlsUrl(url) {
@@ -919,15 +672,15 @@ function watchAllowsSync(watch) {
   return watch.sourceType === 'youtube' || watch.sourceType === 'media' || watch.sourceType === 'hls';
 }
 
-function watchPublic(nameKey) {
-  const row = stmtGetWatch.get(nameKey);
+function watchPublic(roomId) {
+  const row = stmtGetWatch.get(roomId);
   if (!row) return null;
   return {
     sourceType: row.source_type,
     sourceUrl: row.source_url,
     videoId: row.video_id || '',
     hostPeerId: row.host_peer_id || '',
-    hostUserId: row.host_user_id == null ? null : Number(row.host_user_id),
+    hostUserId: row.host_user_id == null ? null : String(row.host_user_id),
     hostUsernameKey: row.host_username_key || '',
     paused: Boolean(row.paused),
     mediaTime: Number(row.media_time) || 0,
@@ -938,7 +691,7 @@ function watchPublic(nameKey) {
 function memberMatchesWatchHost(watch, member, user) {
   if (!watch || !member) return false;
   if (watch.hostPeerId && watch.hostPeerId === member.peer_id) return true;
-  if (watch.hostUserId && user && Number(watch.hostUserId) === Number(user.id)) return true;
+  if (watch.hostUserId && user && String(watch.hostUserId) === String(user.id)) return true;
   if (watch.hostUsernameKey && watch.hostUsernameKey === member.username_key) return true;
   return false;
 }
@@ -1011,37 +764,37 @@ function hostFieldsFromMember(member) {
 }
 
 function fallbackWatchHost(room, leavingPeerId) {
-  const watch = stmtGetWatch.get(room.name_key);
+  const watch = stmtGetWatch.get(room.id);
   if (!watch || !leavingPeerId || watch.host_peer_id !== leavingPeerId) return;
-  const members = stmtMembersInRoom.all(room.name_key);
+  const members = stmtMembersInRoom.all(room.id);
   const owner = members.find((row) => {
     const user = row.user_id ? stmtGetUser.get(row.user_id) : null;
     return isCreator(room, row, user);
   }) || members[0];
   if (!owner) {
-    stmtDeleteWatch.run(room.name_key);
+    stmtDeleteWatch.run(room.id);
     return null;
   }
   stmtUpdateWatchHost.run({
-    name_key: room.name_key,
+    room_id: room.id,
     ...hostFieldsFromMember(owner),
     updated_at: Date.now(),
   });
-  return watchPublic(room.name_key);
+  return watchPublic(room.id);
 }
 
-function broadcastWatch(nameKey, extra) {
+function broadcastWatch(roomId, extra) {
   if (!watchIo) return;
-  watchIo.to(nameKey).emit('watch:event', {
+  watchIo.to(String(roomId)).emit('watch:event', {
     action: extra && extra.action,
-    state: watchPublic(nameKey),
+    state: watchPublic(roomId),
     serverAt: Date.now(),
     sentAt: extra && extra.sentAt,
   });
 }
 
 function persistWatchControl(room, member, user, action, body) {
-  const current = watchPublic(room.name_key);
+  const current = watchPublic(room.id);
   if (!current) throw httpError(400, 'Start a watch party first.', 'watch_missing');
   if (!watchAllowsSync(current)) return current;
   if (!canControlWatch(room, member, user, current)) {
@@ -1055,25 +808,16 @@ function persistWatchControl(room, member, user, action, body) {
       ? 0
       : (body && body.paused == null ? (current.paused ? 1 : 0) : (body.paused ? 1 : 0));
   stmtUpdateWatchPlayback.run({
-    name_key: room.name_key,
+    room_id: room.id,
     paused,
     media_time: Number.isFinite(mediaTime) ? mediaTime : current.mediaTime,
     updated_at: now,
   });
-  broadcastWatch(room.name_key, {
+  broadcastWatch(room.id, {
     action,
     sentAt: Number(body && body.sentAt) || now,
   });
-  return watchPublic(room.name_key);
-}
-
-function resolveJoinRoom(parsed) {
-  if (parsed.tag) return stmtGetRoom.get(parsed.key) || null;
-  const room = stmtGetRoom.get(parsed.nameKey);
-  if (!room) return null;
-  if (room.permanent) return room;
-  if (!room.tag && !String(room.name_key).includes('#')) return room;
-  return null;
+  return watchPublic(room.id);
 }
 
 function dropMemberRow(token) {
@@ -1084,18 +828,17 @@ function dropMemberRow(token) {
 }
 
 const addMemberTx = db.transaction((room, username, previousToken, userId) => {
+  roomsApi.assertJoinAccess(room, userId ? stmtGetUser.get(userId) : null);
   const previous = previousToken ? dropMemberRow(previousToken) : null;
-  const count = stmtMemberCount.get(room.name_key).n;
-  if (count >= roomMemberCap(room)) throw httpError(409, 'Room is full', 'room_full');
-  if (stmtUsernameTaken.get(room.name_key, username.key)) {
+  if (stmtUsernameTaken.get(room.id, username.key)) {
     throw httpError(409, 'Username taken', 'username_taken');
   }
-  const token = crypto.randomBytes(32).toString('hex');
-  const peerId = crypto.randomBytes(8).toString('hex');
+  const token = roomsLib.newSessionToken();
+  const peerId = ids.nextSnowflake();
   try {
     stmtInsertMember.run({
       session_token: token,
-      name_key: room.name_key,
+      room_id: room.id,
       peer_id: peerId,
       username: username.display,
       username_key: username.key,
@@ -1110,75 +853,22 @@ const addMemberTx = db.transaction((room, username, previousToken, userId) => {
   }
   rememberSession(token, room, username, userId, peerId);
   if (previousToken && previousToken !== token) stmtDeleteSession.run(previousToken);
-  if (!room.permanent && !room.creator_username_key && !room.owner_user_id) {
-    stmtClaimCreator.run(username.key, room.name_key);
-    room = stmtGetRoom.get(room.name_key) || room;
-  }
-  room = claimPermanentOwner(room, userId);
-  touchRoom(room.name_key);
-  if (userId) touchAccount(userId);
-  return { token, peerId, previous, room };
-});
-
-const createRoomTx = db.transaction((roomName, password, opts = {}) => {
-  const now = Date.now();
-  const ownerUserId = opts.ownerUserId || null;
-  const permanent = Boolean(opts.permanent);
-  const kind = parseRoomKind(opts.kind);
-  if (permanent) {
-    if (!ownerUserId) throw httpError(401, 'Unauthorized', 'auth_required');
-    if (stmtGetRoom.get(roomName.nameKey)) {
-      throw httpError(409, 'Room already exists', 'room_exists');
-    }
-    stmtInsertRoom.run({
-      name_key: roomName.nameKey,
-      display_name: roomName.display,
-      password_hash: hashSecret(password),
-      permanent: 1,
-      created_at: now,
-      tag: '',
-      last_join_at: now,
-      creator_username_key: '',
-      owner_user_id: ownerUserId,
-      icon_path: null,
-      kind,
+  if (userId) {
+    roomsApi.stmtUpsertMembership.run({
+      user_id: userId,
+      room_id: room.id,
+      created_at: Date.now(),
     });
-    return stmtGetRoom.get(roomName.nameKey);
+    touchAccount(userId);
   }
-  let room = null;
-  for (let attempt = 0; attempt < 40; attempt++) {
-    const tag = randomTag();
-    const nameKey = `${roomName.nameKey}#${tag}`;
-    if (stmtGetRoom.get(nameKey)) continue;
-    try {
-      stmtInsertRoom.run({
-        name_key: nameKey,
-        display_name: roomName.display,
-        password_hash: hashSecret(password),
-        permanent: 0,
-        created_at: now,
-        tag,
-        last_join_at: now,
-        creator_username_key: ownerUserId ? '' : '',
-        owner_user_id: ownerUserId,
-        icon_path: null,
-        kind,
-      });
-      room = stmtGetRoom.get(nameKey);
-      break;
-    } catch (err) {
-      if (String(err.code || '').startsWith('SQLITE_CONSTRAINT')) continue;
-      throw err;
-    }
-  }
-  if (!room) throw httpError(409, 'Could not allocate a room tag.', 'could_not_create');
-  return room;
+  touchRoom(room.id);
+  return { token, peerId, previous, room };
 });
 
 function announceDroppedMember(previous) {
   if (!previous) return;
   closeSocket(previous.session_token);
-  broadcastRoom(previous.name_key, { type: 'peer-left', id: previous.peer_id }, previous.session_token);
+  broadcastRoom(previous.room_id, { type: 'peer-left', id: previous.peer_id }, previous.session_token);
 }
 
 const app = express();
@@ -1196,7 +886,7 @@ function requireMember(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   let member = stmtGetMember.get(token);
-  let room = member ? stmtGetRoom.get(member.name_key) : null;
+  let room = member ? stmtGetRoom.get(member.room_id) : null;
   if (!member || !room) {
     const restored = restoreMember(token);
     if (restored && restored.gone) {
@@ -1256,48 +946,93 @@ function avatarUrlForUser(user) {
 
 function iconUrlForRoom(room) {
   if (!room || !room.icon_path) return null;
-  return `/api/rooms/icon/${encodeURIComponent(room.name_key)}?v=${uploadCacheTag(room.icon_path)}`;
+  return `/api/rooms/icon/${encodeURIComponent(room.id)}?v=${uploadCacheTag(room.icon_path)}`;
+}
+
+function channelsPayload(room) {
+  return channelsApi.listChannels(room.id).map(channelsLib.channelPublic);
+}
+
+function voiceCountsForRoom(roomId) {
+  const counts = {};
+  for (const row of stmtMembersInRoom.all(roomId)) {
+    const ch = memberVoiceChannel(row.session_token);
+    if (!ch) continue;
+    counts[ch] = (counts[ch] || 0) + 1;
+  }
+  return counts;
 }
 
 function memberPeerPayload(row) {
   const user = row.user_id ? stmtGetUser.get(row.user_id) : null;
+  const voiceChannelId = memberVoiceChannel(row.session_token);
   return {
     id: row.peer_id,
     name: user ? accountDisplayName(user) : row.username,
-    userId: user ? user.id : null,
+    userId: user ? String(user.id) : null,
     avatarUrl: avatarUrlForUser(user),
+    inVoice: Boolean(voiceChannelId),
+    voiceChannelId: voiceChannelId || null,
   };
 }
 
 function pinPayload(row) {
+  const room = {
+    id: row.room_id || row.id,
+    display_name: row.display_name,
+    invite_code: row.invite_code,
+    visibility: row.visibility,
+    icon_path: row.icon_path,
+    owner_user_id: row.owner_user_id,
+    kind: row.kind,
+  };
   return {
-    nameKey: row.name_key,
-    label: roomLabel(row),
-    permanent: Boolean(row.permanent),
-    iconUrl: iconUrlForRoom(row),
+    roomId: String(room.id),
+    inviteCode: room.invite_code,
+    invitePath: `/${room.invite_code}`,
+    label: roomLabel(room),
+    visibility: room.visibility,
+    kind: roomKindOf(room),
+    iconUrl: iconUrlForRoom(room),
     pinned: true,
   };
 }
 
 function accountPublic(user) {
   return {
-    id: user.id,
+    id: String(user.id),
     username: accountDisplayName(user),
     avatarUrl: avatarUrlForUser(user),
   };
 }
 
-function roomPublicPayload(room) {
-  const tag = room.permanent ? '' : String(room.tag || '');
-  const name = roomBaseName(room);
+function joinRequestPublic(row) {
+  const user = stmtGetUser.get(row.user_id);
   return {
+    id: String(row.id),
+    roomId: String(row.room_id),
+    roomName: row.room_name || roomLabel(stmtGetRoom.get(row.room_id) || {}),
+    inviteCode: row.invite_code || '',
+    userId: String(row.user_id),
+    username: user ? accountDisplayName(user) : (row.username ? `@${String(row.username).replace(/^@/, '')}` : ''),
+    avatarUrl: avatarUrlForUser(user),
+    createdAt: Number(row.created_at) || 0,
+    status: row.status,
+  };
+}
+
+function roomPublicPayload(room) {
+  const name = roomLabel(room);
+  return {
+    id: String(room.id),
     name,
-    tag,
-    label: tag ? `${name}#${tag}` : name,
-    nameKey: room.name_key,
-    permanent: Boolean(room.permanent),
+    label: name,
+    inviteCode: room.invite_code,
+    invitePath: `/${room.invite_code}`,
+    visibility: room.visibility,
     kind: roomKindOf(room),
     iconUrl: iconUrlForRoom(room),
+    channels: channelsPayload(room),
   };
 }
 
@@ -1306,11 +1041,12 @@ function memberPayload(room, username, member, user) {
     ...roomPublicPayload(room),
     username,
     isCreator: isCreator(room, member, user),
-    userId: user ? user.id : (member && member.user_id) || null,
+    userId: user ? String(user.id) : (member && member.user_id ? String(member.user_id) : null),
     avatarUrl: avatarUrlForUser(user || (member && member.user_id ? stmtGetUser.get(member.user_id) : null)),
     canEditIcon: isCreator(room, member, user),
-    watch: watchPublic(room.name_key),
-    canManageWatch: canManageWatch(room, member, user, watchPublic(room.name_key)),
+    watch: watchPublic(room.id),
+    canManageWatch: canManageWatch(room, member, user, watchPublic(room.id)),
+    voiceChannelId: member ? memberVoiceChannel(member.session_token) : null,
   };
 }
 
@@ -1329,6 +1065,8 @@ app.get('/api/account', (req, res) => {
   res.json({
     user: user ? accountPublic(user) : null,
     pins: user ? stmtListPins.all(user.id).map(pinPayload) : [],
+    pendingJoinRequests: user ? roomsApi.stmtPendingForOwner.all(user.id).map(joinRequestPublic) : [],
+    outgoingJoinRequests: user ? roomsApi.stmtOutgoingPending.all(user.id).map(joinRequestPublic) : [],
   });
 });
 
@@ -1362,7 +1100,9 @@ app.post('/api/auth/register', async (req, res) => {
   }
   const now = Date.now();
   try {
-    const info = stmtInsertUser.run({
+    const userId = ids.nextSnowflake();
+    stmtInsertUser.run({
+      id: userId,
       email: null,
       password_hash: hashPassword(password),
       username: username.display,
@@ -1370,7 +1110,7 @@ app.post('/api/auth/register', async (req, res) => {
       created_at: now,
       last_login_at: now,
     });
-    const user = stmtGetUser.get(info.lastInsertRowid);
+    const user = stmtGetUser.get(userId);
     setAccountCookie(res, req, user.id);
     res.json({ user: accountPublic(user), pins: [] });
   } catch (err) {
@@ -1434,45 +1174,43 @@ app.put(
 );
 
 app.get('/api/avatars/:userId', (req, res) => {
-  const userId = Number(req.params.userId);
-  if (!Number.isFinite(userId) || userId <= 0) {
+  const userId = String(req.params.userId || '');
+  if (!ids.isSnowflake(userId)) {
     return res.status(404).end();
   }
   const user = stmtGetUser.get(userId);
   if (!user || !user.avatar_path) return res.status(404).end();
   const self = readAccountUser(req);
-  if (self && Number(self.id) === userId) {
+  if (self && String(self.id) === userId) {
     if (!sendUpload(res, user.avatar_path)) res.status(404).end();
     return;
   }
   const member = requireSeatedOrNull(req);
   if (!member) return res.status(404).end();
-  const sameRoom = Number(member.user_id) === userId
-    || stmtMembersInRoom.all(member.name_key).some((row) => Number(row.user_id) === userId);
+  const sameRoom = String(member.user_id) === userId
+    || stmtMembersInRoom.all(member.room_id).some((row) => String(row.user_id) === userId);
   if (!sameRoom) return res.status(404).end();
   if (!sendUpload(res, user.avatar_path)) res.status(404).end();
 });
 
-app.post('/api/rooms', (req, res) => {
+app.post('/api/rooms', requireAccount, (req, res) => {
   const body = req.body || {};
   const roomName = parseRoomName(body.name);
-  const password = String(body.password ?? '');
-  const user = readAccountUser(req);
-  const permanent = Boolean(body.permanent);
-  if (!roomName || !password) {
+  const visibility = roomsApi.parseVisibility(body.visibility);
+  if (!roomName) {
     return res.status(400).json({
-      error: 'Enter a room name and password.',
+      error: 'Enter a room name.',
       code: 'enter_fields',
     });
   }
-  if (permanent && !user) {
-    return res.status(401).json({ error: 'Unauthorized', code: 'auth_required' });
+  if (!visibility) {
+    return res.status(400).json({ error: 'Choose public or private.', code: 'visibility_bad' });
   }
   try {
-    if (user) touchAccount(user.id);
-    const room = createRoomTx(roomName, password, {
-      ownerUserId: user ? user.id : null,
-      permanent,
+    touchAccount(req.user.id);
+    const room = roomsApi.createRoomTx(roomName, {
+      ownerUserId: req.user.id,
+      visibility,
       kind: parseRoomKind(body.kind),
     });
     res.json(roomPublicPayload(room));
@@ -1481,56 +1219,102 @@ app.post('/api/rooms', (req, res) => {
   }
 });
 
+function seatedPayload(joined, username, memberInfo, user) {
+  return memberPayload(joined, username.display, {
+    username_key: username.key,
+    peer_id: memberInfo.peerId,
+    user_id: user ? user.id : null,
+    session_token: memberInfo.token,
+  }, user);
+}
+
 app.post('/api/rooms/join', (req, res) => {
   const body = req.body || {};
-  const roomName = parseRoomName(body.name);
-  const password = String(body.password ?? '');
+  const inviteCode = ids.parseInviteCode(body.inviteCode || body.code);
   const user = readAccountUser(req);
   const username = user ? usernameForUser(user) : parseUsername(body.username);
-  if (!roomName || !username || !password) {
+  if (!inviteCode || !username) {
     return res.status(400).json({
-      error: 'Enter a room name, password, and username.',
+      error: 'Enter an invite code and username.',
       code: 'enter_fields',
     });
   }
-  const room = resolveJoinRoom(roomName);
+  const room = stmtGetRoomByInvite.get(inviteCode);
   if (!room) {
-    const code = roomName.tag ? 'room_not_found' : 'room_tag_required';
-    const error = roomName.tag
-      ? 'Room not found.'
-      : 'Include the room tag, e.g. room#abcd.';
-    return res.status(404).json({ error, code });
-  }
-  if (!hashesMatch(password, room.password_hash)) {
-    return res.status(401).json({ error: 'Wrong password.', code: 'wrong_password' });
+    return res.status(404).json({ error: 'Room not found.', code: 'room_not_found' });
   }
   try {
     const member = addMemberTx(room, username, readSession(req), user ? user.id : null);
     announceDroppedMember(member.previous);
     setSessionCookie(res, req, member.token);
-    const joined = member.room || room;
-    res.json(memberPayload(joined, username.display, {
-      username_key: username.key,
-      peer_id: member.peerId,
-      user_id: user ? user.id : null,
-    }, user));
+    res.json(seatedPayload(member.room || room, username, member, user));
   } catch (err) {
     sendError(res, err, 'Could not join room.', 'could_not_join');
   }
 });
 
-app.post('/api/rooms/rejoin', requireAccount, (req, res) => {
-  const nameKey = String((req.body || {}).nameKey || '');
-  if (!nameKey) {
+app.post('/api/rooms/join-request', requireAccount, (req, res) => {
+  const inviteCode = ids.parseInviteCode((req.body || {}).inviteCode || (req.body || {}).code);
+  if (!inviteCode) {
     return res.status(400).json({ error: 'Room not found.', code: 'room_not_found' });
   }
-  const membership = stmtGetMembership.get(req.user.id, nameKey);
+  const room = stmtGetRoomByInvite.get(inviteCode);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found.', code: 'room_not_found' });
+  }
+  try {
+    const result = roomsApi.queueJoinRequest(room, req.user);
+    if (result.alreadyMember) {
+      const username = usernameForUser(req.user);
+      const member = addMemberTx(room, username, readSession(req), req.user.id);
+      announceDroppedMember(member.previous);
+      setSessionCookie(res, req, member.token);
+      return res.json({ ok: true, joined: seatedPayload(member.room || room, username, member, req.user) });
+    }
+    const payload = joinRequestPublic({ ...result.request, room_name: room.display_name, invite_code: room.invite_code });
+    notifyUser(room.owner_user_id, { type: 'join-request', request: payload });
+    res.json({ ok: true, pending: true, request: payload });
+  } catch (err) {
+    sendError(res, err, 'Could not request access.', 'join_private');
+  }
+});
+
+app.post('/api/rooms/join-request/respond', requireAccount, (req, res) => {
+  const body = req.body || {};
+  try {
+    const result = roomsApi.respondJoinRequest(body.requestId, req.user, Boolean(body.allow));
+    const payload = joinRequestPublic({
+      ...result.request,
+      room_name: result.room.display_name,
+      invite_code: result.room.invite_code,
+    });
+    notifyUser(result.request.user_id, {
+      type: 'join-request-resolved',
+      request: payload,
+      allow: result.request.status === 'approved',
+    });
+    res.json({
+      ok: true,
+      request: payload,
+      pendingJoinRequests: roomsApi.stmtPendingForOwner.all(req.user.id).map(joinRequestPublic),
+    });
+  } catch (err) {
+    sendError(res, err, 'Could not update request.', 'request_fail');
+  }
+});
+
+app.post('/api/rooms/rejoin', requireAccount, (req, res) => {
+  const roomId = String((req.body || {}).roomId || (req.body || {}).nameKey || '');
+  if (!ids.isSnowflake(roomId)) {
+    return res.status(400).json({ error: 'Room not found.', code: 'room_not_found' });
+  }
+  const membership = stmtGetMembership.get(req.user.id, roomId);
   if (!membership) {
     return res.status(404).json({ error: 'Room not found.', code: 'room_not_found' });
   }
-  const room = stmtGetRoom.get(nameKey);
+  const room = stmtGetRoom.get(roomId);
   if (!room) {
-    stmtDeleteMembership.run(req.user.id, nameKey);
+    stmtDeleteMembership.run(req.user.id, roomId);
     return res.status(404).json({ error: 'Room not found.', code: 'room_not_found' });
   }
   try {
@@ -1538,12 +1322,7 @@ app.post('/api/rooms/rejoin', requireAccount, (req, res) => {
     const member = addMemberTx(room, username, readSession(req), req.user.id);
     announceDroppedMember(member.previous);
     setSessionCookie(res, req, member.token);
-    const joined = member.room || room;
-    res.json(memberPayload(joined, username.display, {
-      username_key: username.key,
-      peer_id: member.peerId,
-      user_id: req.user.id,
-    }, req.user));
+    res.json(seatedPayload(member.room || room, username, member, req.user));
   } catch (err) {
     sendError(res, err, 'Could not join room.', 'could_not_join');
   }
@@ -1552,16 +1331,88 @@ app.post('/api/rooms/rejoin', requireAccount, (req, res) => {
 app.post('/api/rooms/pin', requireAccount, requireMember, (req, res) => {
   stmtUpsertMembership.run({
     user_id: req.user.id,
-    name_key: req.room.name_key,
+    room_id: req.room.id,
     created_at: Date.now(),
   });
   res.json({ pins: stmtListPins.all(req.user.id).map(pinPayload) });
 });
 
 app.post('/api/rooms/unpin', requireAccount, (req, res) => {
-  const nameKey = String((req.body || {}).nameKey || '');
-  stmtDeleteMembership.run(req.user.id, nameKey);
+  const roomId = String((req.body || {}).roomId || (req.body || {}).nameKey || '');
+  stmtDeleteMembership.run(req.user.id, roomId);
   res.json({ pins: stmtListPins.all(req.user.id).map(pinPayload) });
+});
+
+app.post('/api/channels', requireMember, (req, res) => {
+  if (!isCreator(req.room, req.member, req.user)) {
+    return res.status(403).json({ error: 'Only the room owner can do that.', code: 'kick_forbidden' });
+  }
+  try {
+    const channel = channelsApi.addChannel(req.room, (req.body || {}).type, (req.body || {}).name);
+    const payload = channelsLib.channelPublic(channel);
+    broadcastRoom(req.room.id, { type: 'channel-added', channel: payload });
+    res.json({ channel: payload, channels: channelsPayload(req.room) });
+  } catch (err) {
+    sendError(res, err, 'Could not create channel.', 'channel_fail');
+  }
+});
+
+app.post('/api/channels/rename', requireMember, (req, res) => {
+  if (!isCreator(req.room, req.member, req.user)) {
+    return res.status(403).json({ error: 'Only the room owner can do that.', code: 'kick_forbidden' });
+  }
+  try {
+    const channel = channelsApi.renameChannel(req.room, (req.body || {}).channelId, (req.body || {}).name);
+    const payload = channelsLib.channelPublic(channel);
+    broadcastRoom(req.room.id, { type: 'channel-renamed', channel: payload });
+    res.json({ channel: payload, channels: channelsPayload(req.room) });
+  } catch (err) {
+    sendError(res, err, 'Could not rename channel.', 'channel_fail');
+  }
+});
+
+app.post('/api/channels/delete', requireMember, (req, res) => {
+  if (!isCreator(req.room, req.member, req.user)) {
+    return res.status(403).json({ error: 'Only the room owner can do that.', code: 'kick_forbidden' });
+  }
+  try {
+    const channelId = String((req.body || {}).channelId || '');
+    const existing = channelsApi.requireChannelInRoom(channelId, req.room.id);
+    if (existing.type === 'voice') {
+      for (const [token, joinedId] of [...voiceByToken.entries()]) {
+        if (String(joinedId) !== String(existing.id)) continue;
+        voiceByToken.delete(token);
+        const member = stmtGetMember.get(token);
+        if (member) {
+          broadcastRoom(req.room.id, {
+            type: 'voice-left',
+            id: member.peer_id,
+            channelId: existing.id,
+            inVoice: false,
+            voiceCounts: voiceCountsForRoom(req.room.id),
+          });
+        }
+      }
+    }
+    stmtDeleteChatInChannel.run(existing.id);
+    const channel = channelsApi.deleteChannel(req.room, existing.id);
+    const payload = channelsLib.channelPublic(channel);
+    broadcastRoom(req.room.id, {
+      type: 'channel-deleted',
+      channel: payload,
+      channelId: payload.id,
+      channels: channelsPayload(req.room),
+      voiceCounts: voiceCountsForRoom(req.room.id),
+    });
+    res.json({
+      ok: true,
+      channel: payload,
+      channels: channelsPayload(req.room),
+      voiceCounts: voiceCountsForRoom(req.room.id),
+    });
+  } catch (err) {
+    sendError(res, err, 'Could not delete channel.', 'channel_fail');
+  }
 });
 
 app.put(
@@ -1574,12 +1425,12 @@ app.put(
     }
     try {
       requireWebpUpload(req);
-      const rel = saveWebpUpload(req.body, roomIconRelPath(req.room.name_key));
+      const rel = saveWebpUpload(req.body, roomIconRelPath(req.room.id));
       if (req.room.icon_path && req.room.icon_path !== rel) {
         unlinkQuiet(path.join(uploadsDir, req.room.icon_path));
       }
-      stmtSetRoomIcon.run(rel, req.room.name_key);
-      const room = stmtGetRoom.get(req.room.name_key);
+      stmtSetRoomIcon.run(rel, req.room.id);
+      const room = stmtGetRoom.get(req.room.id);
       res.json({ iconUrl: iconUrlForRoom(room) });
     } catch (err) {
       sendError(res, err, 'Could not save image.', 'image_invalid');
@@ -1587,14 +1438,14 @@ app.put(
   }
 );
 
-app.get('/api/rooms/icon/:nameKey', (req, res) => {
-  const nameKey = decodeURIComponent(String(req.params.nameKey || ''));
-  const room = stmtGetRoom.get(nameKey);
+app.get('/api/rooms/icon/:roomId', (req, res) => {
+  const roomId = decodeURIComponent(String(req.params.roomId || ''));
+  const room = stmtGetRoom.get(roomId);
   if (!room || !room.icon_path) return res.status(404).end();
   const user = readAccountUser(req);
   const member = requireSeatedOrNull(req);
-  const memberOk = member && member.name_key === nameKey;
-  const pinOk = user && stmtGetMembership.get(user.id, nameKey);
+  const memberOk = member && String(member.room_id) === String(roomId);
+  const pinOk = user && stmtGetMembership.get(user.id, roomId);
   if (!memberOk && !pinOk) return res.status(404).end();
   if (!sendUpload(res, room.icon_path)) res.status(404).end();
 });
@@ -1610,7 +1461,7 @@ app.post('/api/kick', requireMember, (req, res) => {
   if (peerId === req.member.peer_id) {
     return res.status(400).json({ error: 'You cannot remove yourself.', code: 'kick_self' });
   }
-  const target = stmtGetMemberByPeer.get(req.room.name_key, peerId);
+  const target = stmtGetMemberByPeer.get(req.room.id, peerId);
   if (!target) {
     return res.status(404).json({ error: 'Peer gone', code: 'peer_gone' });
   }
@@ -1625,6 +1476,59 @@ app.post('/api/leave', (req, res) => {
   if (token) removeMember(token, true, true);
   clearSessionCookie(res, req);
   res.json({ ok: true });
+});
+
+app.post('/api/voice', requireMember, (req, res) => {
+  const action = String((req.body || {}).action || '').trim().toLowerCase();
+  const token = req.member.session_token;
+  const peerId = req.member.peer_id;
+  const roomId = req.room.id;
+  if (action === 'join') {
+    try {
+      const channel = channelsApi.requireChannelInRoom((req.body || {}).channelId, roomId, 'voice');
+      const previousChannelId = memberVoiceChannel(token);
+      const result = channelsApi.joinVoice(voiceByToken, token, channel, previousChannelId);
+      if (result.previousChannelId) {
+      broadcastRoom(roomId, {
+        type: 'voice-left',
+        id: peerId,
+        channelId: result.previousChannelId,
+        inVoice: false,
+        voiceCounts: voiceCountsForRoom(roomId),
+      });
+      }
+      broadcastRoom(roomId, {
+        type: 'voice-joined',
+        id: peerId,
+        channelId: result.channelId,
+        inVoice: true,
+        voiceCounts: voiceCountsForRoom(roomId),
+      });
+      return res.json({
+        ok: true,
+        inVoice: true,
+        channelId: result.channelId,
+        voiceCounts: voiceCountsForRoom(roomId),
+      });
+    } catch (err) {
+      return sendError(res, err, 'Could not join voice.', 'voice_bad');
+    }
+  }
+  if (action === 'leave') {
+    const channelId = memberVoiceChannel(token);
+    if (channelId) {
+      voiceByToken.delete(token);
+      broadcastRoom(roomId, {
+        type: 'voice-left',
+        id: peerId,
+        channelId,
+        inVoice: false,
+        voiceCounts: voiceCountsForRoom(roomId),
+      });
+    }
+    return res.json({ ok: true, inVoice: false, channelId: null, voiceCounts: voiceCountsForRoom(roomId) });
+  }
+  return res.status(400).json({ error: 'Invalid action.', code: 'voice_bad' });
 });
 
 app.get('/api/stream', requireMember, (req, res) => {
@@ -1651,7 +1555,7 @@ app.get('/api/stream', requireMember, (req, res) => {
   const client = {
     id: member.peer_id,
     token: member.session_token,
-    nameKey: member.name_key,
+    roomId: member.room_id,
     username: member.username,
     res,
     replaced: false,
@@ -1666,11 +1570,11 @@ app.get('/api/stream', requireMember, (req, res) => {
     replaced = true;
   }
 
-  touchRoom(room.name_key);
+  touchRoom(room.id);
   sockets.set(client.token, client);
 
   const others = stmtMembersInRoom
-    .all(room.name_key)
+    .all(room.id)
     .filter((row) => row.session_token !== client.token)
     .map(memberPeerPayload);
   send(client, {
@@ -1680,10 +1584,15 @@ app.get('/api/stream', requireMember, (req, res) => {
     ...memberPeerPayload(member),
     peers: others,
     kind: roomKindOf(room),
-    watch: watchPublic(room.name_key),
+    watch: watchPublic(room.id),
+    channels: channelsPayload(room),
+    voiceCounts: voiceCountsForRoom(room.id),
+    pendingJoinRequests: isCreator(room, member, req.user)
+      ? roomsApi.stmtPendingForOwner.all(room.owner_user_id).filter((row) => String(row.room_id) === String(room.id)).map(joinRequestPublic)
+      : [],
   });
   if (!replaced) {
-    broadcastRoom(room.name_key, { type: 'peer-joined', ...memberPeerPayload(member) }, client.token);
+    broadcastRoom(room.id, { type: 'peer-joined', ...memberPeerPayload(member) }, client.token);
   }
 
   const heartbeat = setInterval(() => {
@@ -1707,7 +1616,7 @@ app.post('/api/watch', requireMember, (req, res) => {
   const room = req.room;
   const member = req.member;
   const user = req.user || (member.user_id ? stmtGetUser.get(member.user_id) : null);
-  const current = watchPublic(room.name_key);
+  const current = watchPublic(room.id);
   const now = Date.now();
 
   try {
@@ -1717,8 +1626,8 @@ app.post('/api/watch', requireMember, (req, res) => {
       }
       const source = parseWatchSource(body.url);
       const keepHost = current && (
-        stmtGetMemberByPeer.get(room.name_key, current.hostPeerId)
-        || membersMatchHost(current, room.name_key)
+        stmtGetMemberByPeer.get(room.id, current.hostPeerId)
+        || membersMatchHost(current, room.id)
       );
       const host = keepHost && current.hostPeerId
         ? {
@@ -1728,7 +1637,7 @@ app.post('/api/watch', requireMember, (req, res) => {
         }
         : hostFieldsFromMember(member);
       stmtUpsertWatch.run({
-        name_key: room.name_key,
+        room_id: room.id,
         source_type: source.sourceType,
         source_url: source.sourceUrl,
         video_id: source.videoId,
@@ -1737,16 +1646,16 @@ app.post('/api/watch', requireMember, (req, res) => {
         media_time: 0,
         updated_at: now,
       });
-      broadcastWatch(room.name_key, { action: 'set' });
-      return res.json({ ok: true, watch: watchPublic(room.name_key) });
+      broadcastWatch(room.id, { action: 'set' });
+      return res.json({ ok: true, watch: watchPublic(room.id) });
     }
 
     if (action === 'stop') {
       if (!canManageWatch(room, member, user, current)) {
         return res.status(403).json({ error: 'Only the host can do that.', code: 'watch_forbidden' });
       }
-      stmtDeleteWatch.run(room.name_key);
-      broadcastWatch(room.name_key, { action: 'stop' });
+      stmtDeleteWatch.run(room.id);
+      broadcastWatch(room.id, { action: 'stop' });
       return res.json({ ok: true, watch: null });
     }
 
@@ -1758,17 +1667,17 @@ app.post('/api/watch', requireMember, (req, res) => {
         return res.status(400).json({ error: 'Start a watch party first.', code: 'watch_missing' });
       }
       const peerId = String(body.peerId || '');
-      const target = stmtGetMemberByPeer.get(room.name_key, peerId);
+      const target = stmtGetMemberByPeer.get(room.id, peerId);
       if (!target) {
         return res.status(404).json({ error: 'Peer gone', code: 'peer_gone' });
       }
       stmtUpdateWatchHost.run({
-        name_key: room.name_key,
+        room_id: room.id,
         ...hostFieldsFromMember(target),
         updated_at: now,
       });
-      broadcastWatch(room.name_key, { action: 'host' });
-      return res.json({ ok: true, watch: watchPublic(room.name_key) });
+      broadcastWatch(room.id, { action: 'host' });
+      return res.json({ ok: true, watch: watchPublic(room.id) });
     }
 
     if (action === 'tick') {
@@ -1790,7 +1699,7 @@ function membersMatchHost(watch, nameKey) {
   const members = stmtMembersInRoom.all(nameKey);
   return members.some((row) => {
     if (watch.hostPeerId && row.peer_id === watch.hostPeerId) return true;
-    if (watch.hostUserId && Number(row.user_id) === Number(watch.hostUserId)) return true;
+    if (watch.hostUserId && String(row.user_id) === String(watch.hostUserId)) return true;
     if (watch.hostUsernameKey && row.username_key === watch.hostUsernameKey) return true;
     return false;
   });
@@ -1805,9 +1714,14 @@ app.post('/api/signal', requireMember, (req, res) => {
   if (body.type !== 'signal' || !body.data || !body.to) {
     return res.status(400).json({ error: 'Bad signal' });
   }
-  const target = findSocketById(body.to, from.nameKey);
+  const fromVoice = memberVoiceChannel(from.token);
+  const target = findSocketById(body.to, from.roomId);
   if (!target) {
     return res.status(404).json({ error: 'Peer gone' });
+  }
+  const targetVoice = memberVoiceChannel(target.token);
+  if (!fromVoice || !targetVoice || String(fromVoice) !== String(targetVoice)) {
+    return res.status(403).json({ error: 'Not in the same voice channel.', code: 'voice_peer' });
   }
   send(target, { type: 'signal', from: from.id, data: body.data });
   res.json({ ok: true });
@@ -1831,11 +1745,19 @@ function sendHtml(res, fileName, replacements) {
 }
 
 function sendIndex(res) {
-  sendHtml(res, 'index.html', [
+  const replacements = [
     ['href="/styles.css"', `href="/styles.css?v=${assetVersion('styles.css')}"`],
     ['src="/app.js"', `src="/app.js?v=${assetVersion('app.js')}"`],
     ['"./i18n.js":"/i18n.js"', `"./i18n.js":"/i18n.js?v=${assetVersion('i18n.js')}"`],
-  ]);
+  ];
+  const jsDir = path.join(publicDir, 'js');
+  if (fs.existsSync(jsDir)) {
+    for (const file of fs.readdirSync(jsDir).filter((name) => name.endsWith('.js'))) {
+      const key = `"./js/${file}":"/js/${file}"`;
+      replacements.push([key, `"./js/${file}":"/js/${file}?v=${assetVersion(`js/${file}`)}"`]);
+    }
+  }
+  sendHtml(res, 'index.html', replacements);
 }
 
 app.get(['/', '/index.html'], (_req, res) => {
@@ -1843,6 +1765,11 @@ app.get(['/', '/index.html'], (_req, res) => {
 });
 
 app.get(['/r/:name', '/r/:name/:tag'], (_req, res) => {
+  res.redirect(301, '/');
+});
+
+app.get('/:inviteCode', (req, res, next) => {
+  if (!ids.parseInviteCode(req.params.inviteCode)) return next();
   sendIndex(res);
 });
 
@@ -1864,22 +1791,42 @@ setInterval(() => {
   sweepExpiredAccounts();
 }, SWEEP_MS).unref();
 
-function chatPayload(row) {
+function chatPayload(row, user) {
+  const usernameKey = row.usernameKey || row.username_key;
+  const account = user || (usernameKey ? stmtGetUserByUsername.get(usernameKey) : null);
   return {
-    id: Number(row.id),
+    id: String(row.id),
+    channelId: String(row.channelId || row.channel_id || ''),
     peerId: row.peerId || row.peer_id,
     username: row.username,
-    usernameKey: row.usernameKey || row.username_key,
+    usernameKey,
     body: row.body,
     createdAt: Number(row.createdAt || row.created_at),
+    avatarUrl: avatarUrlForUser(account),
   };
+}
+
+function defaultTextChannelId(roomId) {
+  const text = channelsApi.listChannels(roomId).find((ch) => ch.type === 'text');
+  return text ? String(text.id) : null;
+}
+
+function joinChatChannel(socket, channelId) {
+  const member = stmtGetMember.get(socket.data.token);
+  if (!member) return null;
+  const channel = channelsApi.getChannel(channelId);
+  if (!channel || String(channel.room_id) !== String(member.room_id) || channel.type !== 'text') return null;
+  if (socket.data.channelId) socket.leave(`channel:${socket.data.channelId}`);
+  socket.data.channelId = String(channel.id);
+  socket.join(`channel:${channel.id}`);
+  return channel;
 }
 
 function memberFromHandshake(req) {
   const token = (req.signedCookies && req.signedCookies.session) || null;
   if (!token) return null;
   let member = stmtGetMember.get(token);
-  let room = member ? stmtGetRoom.get(member.name_key) : null;
+  let room = member ? stmtGetRoom.get(member.room_id) : null;
   if (!member || !room) {
     const restored = restoreMember(token);
     if (!restored || restored.gone) return null;
@@ -1903,7 +1850,7 @@ io.use((socket, next) => {
     const session = memberFromHandshake(socket.request);
     if (!session) return next(new Error('Unauthorized'));
     socket.data.token = session.token;
-    socket.data.nameKey = session.member.name_key;
+    socket.data.roomId = session.member.room_id;
     socket.data.username = session.member.username;
     socket.data.usernameKey = session.member.username_key;
     socket.data.peerId = session.member.peer_id;
@@ -1916,11 +1863,18 @@ io.on('connection', (socket) => {
   const prev = chatSockets.get(socket.data.token);
   if (prev && prev !== socket) prev.disconnect(true);
   chatSockets.set(socket.data.token, socket);
-  socket.join(socket.data.nameKey);
-  socket.emit('chat:history', stmtChatHistory.all(socket.data.nameKey).map(chatPayload));
+  socket.join(socket.data.roomId);
+  const initial = joinChatChannel(socket, defaultTextChannelId(socket.data.roomId));
+  socket.emit('chat:history', initial ? stmtChatHistory.all(initial.id).map(chatPayload) : []);
 
   socket.on('disconnect', () => {
     if (chatSockets.get(socket.data.token) === socket) chatSockets.delete(socket.data.token);
+  });
+
+  socket.on('chat:switch', (payload) => {
+    const channel = joinChatChannel(socket, payload && payload.channelId);
+    if (!channel) return;
+    socket.emit('chat:history', stmtChatHistory.all(channel.id).map(chatPayload));
   });
 
   socket.on('chat:send', (payload) => {
@@ -1933,36 +1887,42 @@ io.on('connection', (socket) => {
       .trim();
     if (!body || body.length > CHAT_MAX_LEN) return;
     const member = stmtGetMember.get(socket.data.token);
-    if (!member || member.name_key !== socket.data.nameKey) return;
+    if (!member || member.room_id !== socket.data.roomId) return;
+    const channelId = String((payload && payload.channelId) || socket.data.channelId || '');
+    const channel = channelsApi.getChannel(channelId);
+    if (!channel || String(channel.room_id) !== String(member.room_id) || channel.type !== 'text') return;
     socket.data.lastChatAt = now;
     const id = addChatTx({
-      name_key: member.name_key,
+      channel_id: channel.id,
+      room_id: member.room_id,
       peer_id: member.peer_id,
       username: member.username,
       username_key: member.username_key,
       body,
       created_at: now,
     });
-    io.to(member.name_key).emit('chat:message', chatPayload({
+    const account = member.user_id ? stmtGetUser.get(member.user_id) : null;
+    io.to(`channel:${channel.id}`).emit('chat:message', chatPayload({
       id,
+      channelId: channel.id,
       peerId: member.peer_id,
       username: member.username,
       usernameKey: member.username_key,
       body,
       createdAt: now,
-    }));
+    }, account));
   });
 
   socket.on('chat:delete', (payload) => {
-    const id = Number(payload && payload.id);
-    if (!Number.isFinite(id) || id <= 0) return;
+    const id = String(payload && payload.id || '');
+    if (!ids.isSnowflake(id)) return;
     const member = stmtGetMember.get(socket.data.token);
-    const room = member ? stmtGetRoom.get(member.name_key) : null;
+    const room = member ? stmtGetRoom.get(member.room_id) : null;
     if (!member || !room || !isCreator(room, member, readAccountUser(socket.request))) return;
-    const row = stmtGetChat.get(id, member.name_key);
+    const row = stmtGetChat.get(id, member.room_id);
     if (!row) return;
-    stmtDeleteChat.run(id, member.name_key);
-    io.to(member.name_key).emit('chat:deleted', { id });
+    stmtDeleteChat.run(id, member.room_id);
+    io.to(`channel:${row.channel_id}`).emit('chat:deleted', { id });
   });
 });
 
@@ -1977,7 +1937,7 @@ watchIo.use((socket, next) => {
     const session = memberFromHandshake(socket.request);
     if (!session) return next(new Error('Unauthorized'));
     socket.data.token = session.token;
-    socket.data.nameKey = session.member.name_key;
+    socket.data.roomId = session.member.room_id;
     next();
   });
 });
@@ -1986,10 +1946,10 @@ watchIo.on('connection', (socket) => {
   const prev = watchSockets.get(socket.data.token);
   if (prev && prev !== socket) prev.disconnect(true);
   watchSockets.set(socket.data.token, socket);
-  socket.join(socket.data.nameKey);
+  socket.join(socket.data.roomId);
   socket.emit('watch:event', {
     action: 'set',
-    state: watchPublic(socket.data.nameKey),
+    state: watchPublic(socket.data.roomId),
     serverAt: Date.now(),
   });
 
@@ -2001,8 +1961,8 @@ watchIo.on('connection', (socket) => {
     const action = payload && payload.action;
     if (action !== 'play' && action !== 'pause' && action !== 'seek') return;
     const member = stmtGetMember.get(socket.data.token);
-    const room = member ? stmtGetRoom.get(member.name_key) : null;
-    if (!member || !room || member.name_key !== socket.data.nameKey) return;
+    const room = member ? stmtGetRoom.get(member.room_id) : null;
+    if (!member || !room || member.room_id !== socket.data.roomId) return;
     try {
       persistWatchControl(room, member, readAccountUser(socket.request), action, payload || {});
     } catch {
