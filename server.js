@@ -231,9 +231,9 @@ const {
   stmtDeleteRoom,
   stmtInsertMember,
   stmtGetMember,
+  usernameTakenByOther,
   stmtMembersInRoom,
   stmtMemberCount,
-  stmtUsernameTaken,
   stmtDeleteMember,
   stmtDeleteMembersInRoom,
   stmtGetSession,
@@ -359,8 +359,7 @@ function deleteOrphanRoom(roomId) {
 
 function evictRoom(roomId) {
   for (const row of stmtMembersInRoom.all(roomId)) {
-    const sock = findSocketByToken(row.session_token);
-    if (sock) send(sock, { type: 'kicked' });
+    sendToToken(row.session_token, { type: 'kicked' });
     removeMember(row.session_token, true, true);
   }
 }
@@ -409,16 +408,30 @@ function sweepExpiredRooms() {
   }
 }
 
+function sseList(token) {
+  return sockets.get(token) || [];
+}
+
+function allSseClients() {
+  const out = [];
+  for (const list of sockets.values()) out.push(...list);
+  return out;
+}
+
 function roomSockets(roomId) {
-  return [...sockets.values()].filter((client) => String(client.roomId) === String(roomId));
+  return allSseClients().filter((client) => String(client.roomId) === String(roomId));
 }
 
 function socketsForUser(userId) {
   if (!userId) return [];
-  return [...sockets.values()].filter((client) => {
+  return allSseClients().filter((client) => {
     const member = stmtGetMember.get(client.token);
     return member && String(member.user_id) === String(userId);
   });
+}
+
+function sendToToken(token, payload) {
+  for (const client of sseList(token)) send(client, payload);
 }
 
 function notifyUser(userId, payload) {
@@ -438,7 +451,8 @@ function broadcastRoom(nameKey, payload, exceptToken) {
 }
 
 function findSocketByToken(token) {
-  return sockets.get(token) || null;
+  const list = sseList(token);
+  return list.length ? list[0] : null;
 }
 
 function findSocketById(id, roomId) {
@@ -466,28 +480,46 @@ function clearSessionCookie(res, req) {
   });
 }
 
+function addIoSocket(map, token, socket) {
+  let set = map.get(token);
+  if (!set) {
+    set = new Set();
+    map.set(token, set);
+  }
+  set.add(socket);
+}
+
+function dropIoSocket(map, token, socket) {
+  const set = map.get(token);
+  if (!set) return;
+  set.delete(socket);
+  if (!set.size) map.delete(token);
+}
+
+function closeIoSockets(map, token) {
+  const set = map.get(token);
+  if (!set) return;
+  map.delete(token);
+  for (const sock of set) sock.disconnect(true);
+}
+
 function closeChatSocket(token) {
-  const sock = chatSockets.get(token);
-  if (!sock) return;
-  chatSockets.delete(token);
-  sock.disconnect(true);
+  closeIoSockets(chatSockets, token);
 }
 
 function closeWatchSocket(token) {
-  const sock = watchSockets.get(token);
-  if (!sock) return;
-  watchSockets.delete(token);
-  sock.disconnect(true);
+  closeIoSockets(watchSockets, token);
 }
 
 function closeSocket(token) {
   closeChatSocket(token);
   closeWatchSocket(token);
-  const client = sockets.get(token);
-  if (!client) return;
-  client.replaced = true;
+  const list = sseList(token);
   sockets.delete(token);
-  if (!client.res.writableEnded) client.res.end();
+  for (const client of list) {
+    client.replaced = true;
+    if (!client.res.writableEnded) client.res.end();
+  }
 }
 
 function setAccountCookie(res, req, userId) {
@@ -545,7 +577,7 @@ function restoreMember(token) {
   }
   const existing = stmtGetMember.get(token);
   if (existing) return { member: existing, room };
-  if (stmtUsernameTaken.get(room.id, session.username_key)) return null;
+  if (usernameTakenByOther(room.id, session.username_key, session.user_id)) return null;
   const peerId = session.peer_id || ids.nextSnowflake();
   const member = {
     session_token: token,
@@ -830,7 +862,7 @@ function dropMemberRow(token) {
 const addMemberTx = db.transaction((room, username, previousToken, userId) => {
   roomsApi.assertJoinAccess(room, userId ? stmtGetUser.get(userId) : null);
   const previous = previousToken ? dropMemberRow(previousToken) : null;
-  if (stmtUsernameTaken.get(room.id, username.key)) {
+  if (usernameTakenByOther(room.id, username.key, userId)) {
     throw httpError(409, 'Username taken', 'username_taken');
   }
   const token = roomsLib.newSessionToken();
@@ -1465,8 +1497,7 @@ app.post('/api/kick', requireMember, (req, res) => {
   if (!target) {
     return res.status(404).json({ error: 'Peer gone', code: 'peer_gone' });
   }
-  const sock = findSocketByToken(target.session_token);
-  if (sock) send(sock, { type: 'kicked' });
+  sendToToken(target.session_token, { type: 'kicked' });
   removeMember(target.session_token, true, true);
   res.json({ ok: true });
 });
@@ -1561,17 +1592,11 @@ app.get('/api/stream', requireMember, (req, res) => {
     replaced: false,
   };
 
-  let replaced = resumed;
-  const existing = sockets.get(client.token);
-  if (existing) {
-    existing.replaced = true;
-    sockets.delete(client.token);
-    if (!existing.res.writableEnded) existing.res.end();
-    replaced = true;
-  }
+  const existing = sseList(client.token);
+  const replaced = resumed || existing.length > 0;
+  sockets.set(client.token, existing.concat(client));
 
   touchRoom(room.id);
-  sockets.set(client.token, client);
 
   const others = stmtMembersInRoom
     .all(room.id)
@@ -1602,10 +1627,10 @@ app.get('/api/stream', requireMember, (req, res) => {
 
   req.on('close', () => {
     clearInterval(heartbeat);
-    const current = sockets.get(client.token);
-    if (current !== client) return;
-    sockets.delete(client.token);
-    if (client.replaced) return;
+    const next = sseList(client.token).filter((row) => row !== client);
+    if (next.length) sockets.set(client.token, next);
+    else sockets.delete(client.token);
+    if (client.replaced || next.length) return;
     scheduleMemberGrace(client.token);
   });
 });
@@ -1842,6 +1867,8 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   path: '/socket.io',
   serveClient: true,
+  transports: ['websocket', 'polling'],
+  cors: { origin: true, credentials: true },
 });
 
 io.use((socket, next) => {
@@ -1860,15 +1887,13 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const prev = chatSockets.get(socket.data.token);
-  if (prev && prev !== socket) prev.disconnect(true);
-  chatSockets.set(socket.data.token, socket);
+  addIoSocket(chatSockets, socket.data.token, socket);
   socket.join(socket.data.roomId);
   const initial = joinChatChannel(socket, defaultTextChannelId(socket.data.roomId));
   socket.emit('chat:history', initial ? stmtChatHistory.all(initial.id).map(chatPayload) : []);
 
   socket.on('disconnect', () => {
-    if (chatSockets.get(socket.data.token) === socket) chatSockets.delete(socket.data.token);
+    dropIoSocket(chatSockets, socket.data.token, socket);
   });
 
   socket.on('chat:switch', (payload) => {
@@ -1929,6 +1954,8 @@ io.on('connection', (socket) => {
 watchIo = new Server(httpServer, {
   path: '/watch.io',
   serveClient: false,
+  transports: ['websocket', 'polling'],
+  cors: { origin: true, credentials: true },
 });
 
 watchIo.use((socket, next) => {
@@ -1943,9 +1970,7 @@ watchIo.use((socket, next) => {
 });
 
 watchIo.on('connection', (socket) => {
-  const prev = watchSockets.get(socket.data.token);
-  if (prev && prev !== socket) prev.disconnect(true);
-  watchSockets.set(socket.data.token, socket);
+  addIoSocket(watchSockets, socket.data.token, socket);
   socket.join(socket.data.roomId);
   socket.emit('watch:event', {
     action: 'set',
@@ -1954,7 +1979,7 @@ watchIo.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    if (watchSockets.get(socket.data.token) === socket) watchSockets.delete(socket.data.token);
+    dropIoSocket(watchSockets, socket.data.token, socket);
   });
 
   socket.on('watch:control', (payload) => {

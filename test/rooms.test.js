@@ -152,4 +152,45 @@ describe('rooms and channels', () => {
       (err) => err.code === 'channel_last'
     );
   });
+
+  it('lets the same account sit in a room from two sessions', () => {
+    const { db, store } = openStore();
+    const room = store.rooms.createRoomTx(
+      { display: 'Lobby', key: 'lobby' },
+      { ownerUserId: '1', visibility: 'public', kind: 'screenshare' }
+    );
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO room_members (session_token, room_id, peer_id, username, username_key, joined_at, user_id)
+      VALUES (?, ?, ?, 'owner', 'owner', ?, '1')
+    `).run('tok-a', room.id, 'peer-a', now);
+    db.prepare(`
+      INSERT INTO room_members (session_token, room_id, peer_id, username, username_key, joined_at, user_id)
+      VALUES (?, ?, ?, 'owner', 'owner', ?, '1')
+    `).run('tok-b', room.id, 'peer-b', now);
+    assert.equal(store.stmtMemberCount.get(room.id).n, 2);
+    assert.equal(store.usernameTakenByOther(room.id, 'owner', '1'), false);
+    assert.equal(store.usernameTakenByOther(room.id, 'owner', '2'), true);
+    assert.equal(store.usernameTakenByOther(room.id, 'owner', null), true);
+  });
+
+  it('keeps guest usernames unique in a room', () => {
+    const { db, store } = openStore();
+    const room = store.rooms.createRoomTx(
+      { display: 'Lobby', key: 'lobby' },
+      { ownerUserId: '1', visibility: 'public', kind: 'screenshare' }
+    );
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO room_members (session_token, room_id, peer_id, username, username_key, joined_at, user_id)
+      VALUES (?, ?, ?, 'guest', 'guest', ?, NULL)
+    `).run('tok-g1', room.id, 'peer-g1', now);
+    assert.throws(
+      () => db.prepare(`
+        INSERT INTO room_members (session_token, room_id, peer_id, username, username_key, joined_at, user_id)
+        VALUES (?, ?, ?, 'guest', 'guest', ?, NULL)
+      `).run('tok-g2', room.id, 'peer-g2', now)
+    );
+    assert.equal(store.usernameTakenByOther(room.id, 'guest', '1'), true);
+  });
 });

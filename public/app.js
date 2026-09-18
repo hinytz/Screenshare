@@ -401,6 +401,52 @@ function upsertRoomMember(item) {
   return next;
 }
 
+function memberAccountKey(member) {
+  if (member && member.userId) return `u:${member.userId}`;
+  if (member && member.id) return `p:${member.id}`;
+  return '';
+}
+
+function isSelfSession(member) {
+  if (!member) return false;
+  if (myId && member.id === myId) return true;
+  const myUserId = accountUser && accountUser.id;
+  return Boolean(myUserId && member.userId && String(member.userId) === String(myUserId));
+}
+
+function preferDisplayMember(a, b) {
+  const score = (member) => {
+    let n = 0;
+    if (peerIsLive(peers.get(member.id), member)) n += 2;
+    if (member.inVoice) n += 1;
+    return n;
+  };
+  return score(b) > score(a) ? b : a;
+}
+
+function uniquePeople(members, { skipSelf = true, voiceChannelId = null } = {}) {
+  const seen = new Map();
+  for (const member of members) {
+    if (!member || !member.id) continue;
+    if (skipSelf && isSelfSession(member)) continue;
+    if (voiceChannelId != null && String(member.voiceChannelId || '') !== String(voiceChannelId)) continue;
+    const key = memberAccountKey(member);
+    if (!key) continue;
+    const prev = seen.get(key);
+    seen.set(key, prev ? preferDisplayMember(prev, member) : member);
+  }
+  return [...seen.values()];
+}
+
+function sessionsForPerson(id) {
+  const member = roomMembers.get(id);
+  if (!member) return id ? [id] : [];
+  if (!member.userId) return [member.id];
+  return [...roomMembers.values()]
+    .filter((row) => row.userId && String(row.userId) === String(member.userId))
+    .map((row) => row.id);
+}
+
 function selfIsLive() {
   if (localStream) return true;
   if (cameraTrack()) return true;
@@ -635,16 +681,16 @@ function renderVoiceRoster() {
       live: selfIsLive(),
     });
   }
-  for (const member of roomMembers.values()) {
-    if (member.id === myId) continue;
-    if (!channelId || String(member.voiceChannelId || '') !== String(channelId)) continue;
-    rows.push({
-      id: member.id,
-      name: member.name || peerLabel(member.id),
-      self: false,
-      avatarUrl: member.avatarUrl,
-      live: peerIsLive(peers.get(member.id), member),
-    });
+  if (channelId) {
+    for (const member of uniquePeople(roomMembers.values(), { voiceChannelId: channelId })) {
+      rows.push({
+        id: member.id,
+        name: member.name || peerLabel(member.id),
+        self: false,
+        avatarUrl: member.avatarUrl,
+        live: peerIsLive(peers.get(member.id), member),
+      });
+    }
   }
   roster.replaceChildren(
     ...rows.map((item) => {
@@ -691,8 +737,7 @@ function renderVoiceIdleCards() {
       live: selfIsLive(),
     });
   }
-  for (const member of roomMembers.values()) {
-    if (!member.inVoice || member.id === myId) continue;
+  for (const member of uniquePeople([...roomMembers.values()].filter((row) => row.inVoice))) {
     rows.push({
       name: member.name || peerLabel(member.id),
       avatarUrl: member.avatarUrl,
@@ -1605,25 +1650,35 @@ function setRoomLabel(label) {
   roomLabel.hidden = !currentRoomLabel;
 }
 
+async function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Electron and some Chromium builds expose clipboard but deny write.
+    }
+  }
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.setAttribute('readonly', '');
+  field.style.position = 'fixed';
+  field.style.left = '-9999px';
+  document.body.appendChild(field);
+  field.focus();
+  field.select();
+  const ok = document.execCommand('copy');
+  field.remove();
+  if (!ok) throw new Error('copy');
+}
+
 async function copyRoomLink() {
   if (!currentInviteCode && !currentRoomLabel) return;
   const url = roomInviteUrl();
   try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(url);
-    } else {
-      const field = document.createElement('textarea');
-      field.value = url;
-      field.setAttribute('readonly', '');
-      field.style.position = 'fixed';
-      field.style.left = '-9999px';
-      document.body.appendChild(field);
-      field.select();
-      document.execCommand('copy');
-      field.remove();
-    }
+    await copyText(url);
   } catch {
-    showRoomError(t('could_not_reach'));
+    showRoomError(t('copy_fail'));
     return;
   }
   if (!roomLabel) return;
@@ -1725,8 +1780,7 @@ function renderPeopleList() {
   if (!peopleList) return;
   const rows = [];
   if (myName) rows.push({ id: 'self', name: myName, self: true });
-  for (const member of roomMembers.values()) {
-    if (member.id === myId) continue;
+  for (const member of uniquePeople(roomMembers.values())) {
     rows.push({
       id: member.id,
       name: member.name || peerLabel(member.id),
@@ -2037,7 +2091,7 @@ function applyLayout() {
 }
 
 function setPeerStatus() {
-  const count = (myName ? 1 : 0) + roomMembers.size;
+  const count = (myName ? 1 : 0) + uniquePeople(roomMembers.values()).length;
   if (peerCount) {
     peerCount.textContent = String(count);
   }
@@ -4821,9 +4875,7 @@ function connectChat() {
 }
 
 function disconnectWatch() {
-  if (!watchSocket) return;
-  watchSocket.removeAllListeners();
-  watchSocket.disconnect();
+  chatMod.stopIo(watchSocket);
   watchSocket = null;
 }
 
@@ -4842,7 +4894,7 @@ function connectWatch() {
   disconnectWatch();
   const socketIo = window.io;
   if (typeof socketIo !== 'function') return;
-  watchSocket = socketIo({ path: '/watch.io', withCredentials: true });
+  watchSocket = socketIo(chatMod.ioOptions('/watch.io'));
   watchSocket.on('watch:event', (msg) => {
     if (!msg) return;
     applyIncomingWatch(msg.state, msg.action, msg.serverAt);
@@ -5627,18 +5679,21 @@ async function leaveRoom() {
 }
 
 async function kickPeer(id) {
+  const targets = sessionsForPerson(id);
   try {
-    const res = await fetch('/api/kick', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ id }),
-    });
-    if (!res.ok) {
-      showRoomError(await readError(res, t('kick_forbidden')));
-      return;
+    for (const peerId of targets) {
+      const res = await fetch('/api/kick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ id: peerId }),
+      });
+      if (!res.ok) {
+        showRoomError(await readError(res, t('kick_forbidden')));
+        return;
+      }
+      removePeer(peerId);
     }
-    removePeer(id);
   } catch {
     showRoomError(t('could_not_reach'));
   }

@@ -470,9 +470,16 @@ app.commandLine.appendSwitch('disable-http-cache');
 
 app.whenReady().then(async () => {
   await session.defaultSession.clearCache().catch(() => {});
+  const allowPermission = (permission) => (
+    permission === 'media'
+    || permission === 'display-capture'
+    || permission === 'fullscreen'
+    || permission === 'clipboard-sanitized-write'
+  );
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media' || permission === 'display-capture' || permission === 'fullscreen');
+    callback(allowPermission(permission));
   });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowPermission(permission));
 
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
